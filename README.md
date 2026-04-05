@@ -27,6 +27,12 @@ sudo pacman -S pyside6 mecab-git
 pip install fugashi --break-system-packages
 ```
 
+**Debian/Ubuntu:**
+```bash
+sudo apt install mecab libmecab-dev mecab-ipadic-utf8
+pip install PySide6 fugashi --break-system-packages
+```
+
 **Other distros:**
 Install MeCab and a MeCab dictionary for your distro, then:
 ```bash
@@ -76,8 +82,10 @@ For word audio when mining, install the [Local Audio Server](https://ankiweb.net
 Fuwari connects to the Local Audio Server at `http://localhost:5050` automatically.
 
 ## About
-Fuwari was created to fill a gap in the Linux Japanese immersion tooling space.
-Tools like rampaa/JL work well on Windows but have no native Linux equivalent.
+Fuwari was made so people can use a Japanese dictionary while playing their favourit VNs (Visual Novels)!
+Something like Fuwari already exists on windows which is rampaa's JL, but there is no equivalent for Linux
+(trust me, I've tried). So after a long time of contemplation I decided to learn coding just to fix this issue.
+And now, here we are! Enjoy your popup dictionary while playing your favourite Visual Novels! Happy Mining ね〜！
 
 Wayland's security model restricts applications from arbitrarily placing windows
 above others, which makes building a popup dictionary more challenging than on X11.
