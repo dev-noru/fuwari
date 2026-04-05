@@ -1,0 +1,92 @@
+# ふわり (Fuwari)
+A native Wayland Japanese popup dictionary for Linux, inspired by [rampaa/JL](https://github.com/rampaa/JL).
+
+![Demo](demo.gif)
+
+## Features
+- Clipboard-based automatic text capture
+- Japanese tokenization via MeCab/fugashi
+- JMdict, JMnedict, and KANJIDIC2 dictionary support built-in
+- JPDB frequency rankings
+- Anki card mining with AnkiConnect and Local Audio Server support (Anki must be running in the background)
+- Follows your system colour scheme via Qt SystemPalette
+- Native Wayland support (X11 compatible)
+
+## Dependencies
+- Python 3
+- PySide6
+- fugashi
+- MeCab with a dictionary (e.g. mecab-git on Arch, mecab + mecab-ipadic on Debian/Ubuntu)
+
+## Installation
+To install Fuwari:
+
+**Arch Linux:**
+```bash
+sudo pacman -S pyside6 mecab-git
+pip install fugashi --break-system-packages
+```
+
+**Other distros:**
+Install MeCab and a MeCab dictionary for your distro, then:
+```bash
+pip install PySide6 fugashi --break-system-packages
+```
+
+### Dictionary Files
+Download the following files and place them in `~/.local/share/jp_popup/`:
+
+- [JMdict + JMnedict + KANJIDIC2](https://github.com/scriptin/jmdict-simplified/releases) — download and extract, then:
+```bash
+mkdir -p ~/.local/share/jp_popup/jpdb_freq
+cp jmdict-eng-*.json ~/.local/share/jp_popup/jmdict-eng.json
+cp jmnedict-all-*.json ~/.local/share/jp_popup/jmnedict-all.json
+cp kanjidic2-en-*.json ~/.local/share/jp_popup/kanjidic2-en.json
+```
+
+- [JPDB frequency list](https://github.com/MarvNC/jpdb-freq-list) — place `term_meta_bank_1.json` in `~/.local/share/jp_popup/jpdb_freq/`
+
+**To Run Fuwari:**
+```bash
+git clone https://github.com/dev-noru/fuwari.git
+cd fuwari
+python main.py
+```
+
+## Anki Integration
+Fuwari supports mining cards directly to Anki via [AnkiConnect](https://ankiweb.net/shared/info/2055492159).
+
+### Requirements
+- Anki must be running in the background
+- [AnkiConnect](https://ankiweb.net/shared/info/2055492159) addon installed in Anki
+- [Local Audio Server](https://ankiweb.net/shared/info/1045800357) addon for audio support (optional)
+
+### Setup
+1. Open Fuwari and click the ⚙ gear icon
+2. Set your AnkiConnect URL (default: `http://localhost:8765`)
+3. Select your deck and note type
+4. Click **Load Fields** and map your note fields to Fuwari's data
+5. Click **Save**
+
+Once configured, hover over any word and click the **+** button in the definition popup to mine it to Anki.
+
+### Audio (Optional)
+For word audio when mining, install the [Local Audio Server](https://ankiweb.net/shared/info/1045800357) addon (`1045800357`) and follow the setup instructions at [yomidevs/local-audio-yomichan](https://github.com/yomidevs/local-audio-yomichan) to download the audio files.
+
+Fuwari connects to the Local Audio Server at `http://localhost:5050` automatically.
+
+## About
+Fuwari was created to fill a gap in the Linux Japanese immersion tooling space.
+Tools like rampaa/JL work well on Windows but have no native Linux equivalent.
+
+Wayland's security model restricts applications from arbitrarily placing windows
+above others, which makes building a popup dictionary more challenging than on X11.
+Fuwari works around this using Qt window flags and compositor window rules to stay
+on top of fullscreen applications.
+
+## Credits
+- [rampaa/JL](https://github.com/rampaa/JL) — Inspiration
+- [scriptin/jmdict-simplified](https://github.com/scriptin/jmdict-simplified) — Dictionary format
+- [EDRDG](https://www.edrdg.org/) — JMdict, JMnedict, and KANJIDIC2 data
+- [polm/fugashi](https://github.com/polm/fugashi) — MeCab Python wrapper
+- [MarvNC/jpdb-freq-list](https://github.com/MarvNC/jpdb-freq-list) — Frequency data
