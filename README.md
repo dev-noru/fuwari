@@ -53,10 +53,8 @@ cp kanjidic2-en-*.json ~/.local/share/jp_popup/kanjidic2-en.json
 - [JPDB frequency list](https://github.com/MarvNC/jpdb-freq-list) — place `term_meta_bank_1.json` in `~/.local/share/jp_popup/jpdb_freq/`
 
 ### Compositor Setups
-This is a reminder that most Wayland Window Managers (Hyprland, niri, MangoWC, etc.) require
-the user to add a window rule for their application. To make sure Fuwari works as expected
-without the compositor grabbing and resizing the application windows, make sure to add the below
-window rules to your respective compositor:
+Most tiling Wayland compositors will attempt to tile or resize Fuwari's windows. To prevent
+this, add the appropriate window rule for your compositor below:
 
 **Hyprland**
 
