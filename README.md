@@ -16,6 +16,7 @@ A native Wayland Japanese popup dictionary for Linux, inspired by [rampaa/JL](ht
 - Python 3
 - PySide6
 - fugashi
+- unidic
 - MeCab with a dictionary (e.g. mecab-git on Arch, mecab + mecab-ipadic on Debian/Ubuntu)
 
 ## Installation
@@ -24,19 +25,22 @@ To install Fuwari:
 **Arch Linux:**
 ```bash
 sudo pacman -S pyside6 mecab-git
-pip install fugashi --break-system-packages
+pip install fugashi unidic --break-system-packages
+python -m unidic download
 ```
 
 **Debian/Ubuntu:**
 ```bash
 sudo apt install mecab libmecab-dev mecab-ipadic-utf8
-pip install PySide6 fugashi --break-system-packages
+pip install fugashi unidic --break-system-packages
+python -m unidic download
 ```
 
 **Other distros:**
 Install MeCab and a MeCab dictionary for your distro, then:
 ```bash
-pip install PySide6 fugashi --break-system-packages
+pip install fugashi unidic --break-system-packages
+python -m unidic download
 ```
 
 ### Dictionary Files
