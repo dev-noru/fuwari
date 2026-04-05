@@ -2,10 +2,14 @@ import os
 import pickle
 import json
 from fugashi import Tagger
+import unidic
+
+
+tagger = Tagger('-d ' + unidic.DICDIR)
 
 
 
-tagger = Tagger()
+
 
 CACHE_DIR = os.path.expanduser('~/.cache/jp_popup')
 DATA_DIR = os.path.expanduser('~/.local/share/jp_popup')
@@ -105,7 +109,7 @@ kanji_dict = load_kanji()
 def tokenize(sentence):
     words = []
     for word in tagger(sentence):
-        if any(0x4e00 <= ord(c) <= 0x9fff for c in word.surface):
+        if word.feature.pos1 == '名詞':
             words.append({'surface': word.surface, 'lemma': word.surface})
         else:
             words.append({'surface': word.surface, 'lemma': word.feature.lemma or word.surface})
