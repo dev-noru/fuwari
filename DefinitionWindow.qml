@@ -189,6 +189,14 @@ Window {
                                     }
                                 }
                             }
+                          }
+                        Text {
+                            text: modelData.Kanji
+                            color: palette.windowText
+                            font.pointSize: 9
+                            font.bold: true
+                            font.family: "Noto Sans CJK JP"
+                            visible: index > 0
                         }
                         Text {
                             text: modelData.Reading
