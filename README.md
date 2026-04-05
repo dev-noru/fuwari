@@ -52,6 +52,37 @@ cp kanjidic2-en-*.json ~/.local/share/jp_popup/kanjidic2-en.json
 
 - [JPDB frequency list](https://github.com/MarvNC/jpdb-freq-list) — place `term_meta_bank_1.json` in `~/.local/share/jp_popup/jpdb_freq/`
 
+### Compositor Setups
+This is a reminder that most Wayland Window Managers (Hyprland, niri, MangoWC, etc.) require
+the user to add a window rule for their application. To make sure Fuwari works as expected
+without the compositor grabbing and resizing the application windows, make sure to add the below
+window rules to your respective compositor:
+
+**Hyprland**
+
+Add the below to either your `hyprland.conf` or `windowrules.conf`:
+```ini
+windowrule = float, class:^(fuwari)$
+```
+
+**niri**
+
+Add the below to your `~/.config/niri/config.kdl`:
+```kdl
+window-rule {
+    match app-id="fuwari"
+    open-floating true
+}
+```
+
+**MangoWC**
+
+Add the below to your `~/.config/mango/config.conf`:
+```ini
+windowrule=isfloating:1,appid:fuwari
+```
+
+
 **To Run Fuwari:**
 ```bash
 git clone https://github.com/dev-noru/fuwari.git
@@ -80,6 +111,7 @@ Once configured, hover over any word and click the **+** button in the definitio
 For word audio when mining, install the [Local Audio Server](https://ankiweb.net/shared/info/1045800357) addon (`1045800357`) and follow the setup instructions at [yomidevs/local-audio-yomichan](https://github.com/yomidevs/local-audio-yomichan) to download the audio files.
 
 Fuwari connects to the Local Audio Server at `http://localhost:5050` automatically.
+
 
 ## About
 Fuwari was made so people can use a Japanese dictionary while playing their favourit VNs (Visual Novels)!
