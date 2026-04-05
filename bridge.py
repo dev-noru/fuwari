@@ -1,6 +1,7 @@
 import urllib.request
 import urllib.parse
 import subprocess
+import time
 import os
 import base64
 import threading
@@ -72,34 +73,18 @@ class Bridge(QObject):
     # Watches the clipboard to grab.
     def clipboard_watcher(self):
         is_wayland = bool(os.getenv('WAYLAND_DISPLAY'))
-        clipboard_cmd = ['wl-paste', '--watch', 'sh', '-c', 'cat; echo; echo "---END---"'] if is_wayland else ['xclip', '-selection', 'clipboard', '-o']
+        clipboard_cmd = ['wl-paste'] if is_wayland else ['xclip', '-selection', 'clipboard', '-o']
         print(f"Using clipboard command: {clipboard_cmd}")
         result_check = ""
-        try:
-            # Activates the clipboard for the wayland display server.
-            if is_wayland == True:
-                result = subprocess.Popen(clipboard_cmd, stdout=subprocess.PIPE, text=True)
-                assert result.stdout is not None
-                while True:
-                    clipboard_check = result.stdout.readline()
-                    write_clipboard = ""
-
-                    while clipboard_check.strip() != '---END---':
-
-                        write_clipboard += clipboard_check
-                        clipboard_check = result.stdout.readline()
-
-                    self.process_clipboard(write_clipboard)
-
-            # Activates the clipboard for the xorg display server.
-            else:
-                while True:
-                        result = subprocess.run(clipboard_cmd, capture_output=True, text=True)
-                        if result_check != result.stdout:
-                            self.process_clipboard(result.stdout)
-                            result_check = result.stdout
-        except Exception as e:
-            print(f"Error: {e}")
+        while True:
+            try:
+                time.sleep(0.1)
+                result = subprocess.run(clipboard_cmd, capture_output=True, text=True)
+                if result_check != result.stdout:
+                    self.process_clipboard(result.stdout)
+                    result_check = result.stdout
+            except Exception:
+                pass
 
  
 
