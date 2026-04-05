@@ -105,5 +105,9 @@ kanji_dict = load_kanji()
 def tokenize(sentence):
     words = []
     for word in tagger(sentence):
-        words.append({'surface': word.surface, 'lemma': word.feature.lemma or word.surface})
+        if any(0x4e00 <= ord(c) <= 0x9fff for c in word.surface):
+            words.append({'surface': word.surface, 'lemma': word.surface})
+        else:
+            words.append({'surface': word.surface, 'lemma': word.feature.lemma or word.surface})
+
     return words
