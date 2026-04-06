@@ -18,13 +18,14 @@ A native Wayland Japanese popup dictionary for Linux, inspired by [rampaa/JL](ht
 - fugashi
 - unidic
 - MeCab with a dictionary (e.g. mecab-git on Arch, mecab + mecab-ipadic on Debian/Ubuntu)
+- wl-clipboard
 
 ## Installation
 To install Fuwari:
 
 **Arch Linux:**
 ```bash
-sudo pacman -S pyside6 python-pip 
+sudo pacman -S pyside6 python-pip wl-clipboard
 yay -S mecab-git
 pip install fugashi unidic --break-system-packages
 python -m unidic download
@@ -44,33 +45,12 @@ pip install fugashi unidic --break-system-packages
 python -m unidic download
 ```
 
-### Dictionary Files
-Download the following files and place them in `~/.local/share/jp_popup/`:
-```bash
-# JMdict
-wget "https://github.com/scriptin/jmdict-simplified/releases/download/3.6.1+20251229123436/jmdict-eng-3.6.1+20251229123436.json.tgz"
-tar -xzf jmdict-eng-3.6.1+20251229123436.json.tgz
-```
+## Dictionary Setup
 
+Run the setup script to automatically download all required dictionary files:
 ```bash
-# JMnedict
-wget "https://github.com/scriptin/jmdict-simplified/releases/download/3.6.1+20251229123436/jmnedict-all-3.6.1+20251229123436.json.tgz"
-tar -xzf jmnedict-all-3.6.1+20251229123436.json.tgz
+bash setup.sh
 ```
-```bash
-# KANJIDIC2
-wget "https://github.com/scriptin/jmdict-simplified/releases/download/3.6.1+20251229123436/kanjidic2-en-3.6.1+20251229123436.json.tgz"
-tar -xzf kanjidic2-en-3.6.1+20251229123436.json.tgz
-```
-# Copy to data dir
-
-```bash
-cp jmdict-eng-*.json ~/.local/share/fuwari/jmdict-eng.json
-cp jmnedict-all-*.json ~/.local/share/fuwari/jmnedict-all.json
-cp kanjidic2-en-*.json ~/.local/share/fuwari/kanjidic2-en.json
-```
-
-- [JPDB frequency list](https://github.com/MarvNC/jpdb-freq-list) — place `term_meta_bank_1.json` in `~/.local/share/jp_popup/jpdb_freq/`
 
 ### Compositor Setups
 Most tiling Wayland compositors will attempt to tile or resize Fuwari's windows. To prevent
