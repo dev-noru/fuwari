@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal, Property, Slot
 from dictionary import tokenize, dictionary, names, frequency, kanji_dict
 from anki import ankiconnect_request
 from settings import settings, save_settings
+from collections import deque
 
 POS_LABELS = {
     'v1': 'Ichidan verb',
@@ -53,12 +54,14 @@ class Bridge(QObject):
     wordsChanged = Signal()
     clipboardUpdated = Signal()
     sentenceChanged = Signal()
+    historyChanged = Signal()
 
     # Class initialization
     def __init__(self):
         super().__init__()
         self._words = []
         self._sentence = ""
+        self._history = deque(maxlen=100)
         # Below we Thread the UI so it runs at the same time.
         thread = threading.Thread(target=self.clipboard_watcher, daemon=True)
         thread.start()
@@ -67,8 +70,10 @@ class Bridge(QObject):
     def process_clipboard(self, sentence):
         self.set_sentence(sentence.strip())
         words = tokenize(sentence)
+        self._history.append({'sentence': sentence.strip(), 'words': words})
         self.set_words(words)
         self.clipboardUpdated.emit()
+        self.historyChanged.emit()
         
     # Watches the clipboard to grab.
     def clipboard_watcher(self):
@@ -106,11 +111,15 @@ class Bridge(QObject):
         self.wordsChanged.emit()
         print(words)
 
+    # Adding history to texts
+    @Slot(result=str)
+    def get_history(self):
+        return json.dumps(list(self._history))
+
     # Grabbing audio of the definition.
     @Slot(str, str, result=str)
     def get_audio(self, term, reading):
         try:
-
             encoded_term = urllib.parse.quote(term)
             encoded_reading = urllib.parse.quote(reading)
             url = f'http://localhost:5050?term={encoded_term}&reading={encoded_reading}'
@@ -210,6 +219,7 @@ class Bridge(QObject):
 
     @Slot(str, result=str)
     def lookup(self, word):
+        print(word)
         try:
             word = word.split('-')[0]
             hiragana = katakana_to_hiragana(word)
