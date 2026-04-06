@@ -228,14 +228,14 @@ class Bridge(QObject):
             results = []
 
             # JMdict
-            entries = dictionary.get(word) or dictionary.get(hiragana)
+            entries = dictionary(word) or dictionary(hiragana)
             if entries:
                 # sort common entries first
                 entries = sorted(entries, key=lambda e: e['kana'][0].get('common', False), reverse=True)
                 for entry in entries:
                     reading = entry['kana'][0]['text']
                     kanji = entry['kanji'][0]['text'] if entry['kanji'] else entry['kana'][0]['text']
-                    freq_rank = frequency.get(kanji) or frequency.get(reading) or None
+                    freq_rank = frequency(kanji) or frequency(reading) or None
                     pos = [POS_LABELS.get(p, p) for p in entry['sense'][0]['partOfSpeech']]
                     definitions = []
                     for sense in entry['sense']:
@@ -245,7 +245,7 @@ class Bridge(QObject):
                                     'Frequency': freq_rank, 'Definitions': definitions})
 
             # JMnedict
-            entry = names.get(word) or names.get(hiragana)
+            entry = names(word) or names(hiragana)
             if entry:
                 reading = entry['kana'][0]['text']
                 kanji = entry['kanji'][0]['text'] if entry['kanji'] else entry['kana'][0]['text']
@@ -258,8 +258,8 @@ class Bridge(QObject):
                                 'Part of Speech': [translation_type], 'Frequency': None, 'Definitions': definitions})
 
             # KANJIDIC
-            if len(word) == 1 and word in kanji_dict:
-                entry = kanji_dict[word]
+            entry = kanji_dict(word)
+            if len(word) == 1 and entry:
                 readings = entry['readingMeaning']['groups'][0]['readings']
                 on_readings = [r['value'] for r in readings if r['type'] == 'ja_on']
                 kun_readings = [r['value'] for r in readings if r['type'] == 'ja_kun']
