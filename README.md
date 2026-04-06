@@ -45,11 +45,12 @@ pip install fugashi unidic --break-system-packages
 python -m unidic download
 ```
 
-## Dictionary Setup
-
-Run the setup script to automatically download all required dictionary files:
+**To Run Fuwari:**
 ```bash
+git clone https://github.com/dev-noru/fuwari.git
+cd fuwari
 bash setup.sh
+python main.py
 ```
 
 ### Compositor Setups
@@ -80,13 +81,6 @@ Add the below to your `~/.config/mango/config.conf`:
 windowrule=isfloating:1,appid:fuwari
 ```
 
-
-**To Run Fuwari:**
-```bash
-git clone https://github.com/dev-noru/fuwari.git
-cd fuwari
-python main.py
-```
 
 ## Anki Integration
 Fuwari supports mining cards directly to Anki via [AnkiConnect](https://ankiweb.net/shared/info/2055492159).
