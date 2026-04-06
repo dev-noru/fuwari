@@ -5,6 +5,7 @@ import json
 def main():
     DATA_DIR = os.path.expanduser('~/.local/share/jp_popup')
     SQL_DIR = os.path.expanduser('~/.local/share/fuwari/fuwari.db')
+    os.makedirs(os.path.dirname(SQL_DIR), exist_ok=True)
     conn = sqlite3.connect(SQL_DIR)
     cursor = conn.cursor()
 
