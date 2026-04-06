@@ -34,4 +34,4 @@ cp jmnedict-all-*.json "$DATA_DIR/jmnedict-all.json"
 cp kanjidic2-en-*.json "$DATA_DIR/kanjidic2-en.json"
 cp term_meta_bank_1.json "$DATA_DIR/jpdb_freq/"
 
-echo "All dictionary files installed. Run 'python migrate.py' to build the database."
+echo "All dictionary files installed. Wait for approximately 1 minute for the initial loading..."
