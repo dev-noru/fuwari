@@ -267,6 +267,18 @@ class Bridge(QObject):
                 results.append({'source': 'KANJIDIC', 'Kanji': entry['literal'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings), 
                                 'Part of Speech': ['Kanji'], 'Frequency': entry['misc'].get('frequency'), 
                                 'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)]})
+                
+            if not results:
+                for char in word:
+                    entry = kanji_dict(char)
+                    if entry:
+                        readings = entry['readingMeaning']['groups'][0]['readings']
+                        on_readings = [r['value'] for r in readings if r['type'] == 'ja_on']
+                        kun_readings = [r['value'] for r in readings if r['type'] == 'ja_kun']
+                        meanings = [m['value'] for m in entry['readingMeaning']['groups'][0]['meanings'] if m['lang'] == 'en']
+                        results.append({'source': 'KANJIDIC', 'Kanji': entry['literal'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings),
+                                        'Part of Speech': ['Kanji'], 'Frequency': entry['misc'].get('frequency'),
+                                        'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)]})
 
             if not results:
                 return ""
