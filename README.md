@@ -24,7 +24,8 @@ To install Fuwari:
 
 **Arch Linux:**
 ```bash
-sudo pacman -S pyside6 python-pip mecab-git
+sudo pacman -S pyside6 python-pip 
+yay -S mecab-git
 pip install fugashi unidic --break-system-packages
 python -m unidic download
 ```
