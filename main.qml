@@ -24,11 +24,12 @@ Window {
     color: Qt.rgba(palette.window.r, palette.window.g, palette.window.b, 0.9)
     z: 1
 
+      // Settings Icon and Button
       Text {
         id: gearIcon
         text: "⚙"
         font.pointSize: 11
-        color: gearMouse.containsMouse ? Qt.hsva(palette.highlight.hsvHue, 1.0, palette.highlight.hsvValue, 1.0) : palette.windowText
+        color: gearMouse.containsMouse ? Qt.hsva(palette.highlight.hsvHue, 0.8, palette.highlight.hsvValue, 1.0) : palette.windowText
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.margins: 5
@@ -42,6 +43,26 @@ Window {
             cursorShape: Qt.PointingHandCursor
         }
       }
+
+      // History Icon and Button
+      Text {
+        id: historyIcon
+        text: "☰"
+        font.pointSize: 11
+        color: historyMouse.containsMouse ? Qt.hsva(palette.highlight.hsvHue, 0.8, palette.highlight.hsvValue, 1.0) : palette.windowText
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 5
+        z: 1
+
+        MouseArea {
+            id: historyMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: historyWindow.visible = !historyWindow.visible
+            cursorShape: Qt.PointingHandCursor
+        } 
+      }
     }
 
 
@@ -50,13 +71,15 @@ SystemPalette {
 }
 
 // Settings Window 
-SettingsWindow {
-    id: settingsWindow
-}
+SettingsWindow { id: settingsWindow }
 
-DefinitionWindow {
-  id: definitionWindow
-}
+// Definition Window
+DefinitionWindow { id: definitionWindow }
+
+// History Window
+HistoryWindow { id: historyWindow }
+
+
   MouseArea {
     anchors.fill: parent
     z: -1
