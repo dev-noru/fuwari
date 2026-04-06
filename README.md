@@ -24,7 +24,7 @@ To install Fuwari:
 
 **Arch Linux:**
 ```bash
-sudo pacman -S pyside6 mecab-git
+sudo pacman -S pyside6 python-pip mecab-git
 pip install fugashi unidic --break-system-packages
 python -m unidic download
 ```
@@ -45,13 +45,28 @@ python -m unidic download
 
 ### Dictionary Files
 Download the following files and place them in `~/.local/share/jp_popup/`:
-
-- [JMdict + JMnedict + KANJIDIC2](https://github.com/scriptin/jmdict-simplified/releases) — download and extract, then:
 ```bash
-mkdir -p ~/.local/share/jp_popup/jpdb_freq
-cp jmdict-eng-*.json ~/.local/share/jp_popup/jmdict-eng.json
-cp jmnedict-all-*.json ~/.local/share/jp_popup/jmnedict-all.json
-cp kanjidic2-en-*.json ~/.local/share/jp_popup/kanjidic2-en.json
+# JMdict
+wget "https://github.com/scriptin/jmdict-simplified/releases/download/3.6.1+20251229123436/jmdict-eng-3.6.1+20251229123436.json.tgz"
+tar -xzf jmdict-eng-3.6.1+20251229123436.json.tgz
+```
+
+```bash
+# JMnedict
+wget "https://github.com/scriptin/jmdict-simplified/releases/download/3.6.1+20251229123436/jmnedict-all-3.6.1+20251229123436.json.tgz"
+tar -xzf jmnedict-all-3.6.1+20251229123436.json.tgz
+```
+```bash
+# KANJIDIC2
+wget "https://github.com/scriptin/jmdict-simplified/releases/download/3.6.1+20251229123436/kanjidic2-en-3.6.1+20251229123436.json.tgz"
+tar -xzf kanjidic2-en-3.6.1+20251229123436.json.tgz
+```
+# Copy to data dir
+
+```bash
+cp jmdict-eng-*.json ~/.local/share/fuwari/jmdict-eng.json
+cp jmnedict-all-*.json ~/.local/share/fuwari/jmnedict-all.json
+cp kanjidic2-en-*.json ~/.local/share/fuwari/kanjidic2-en.json
 ```
 
 - [JPDB frequency list](https://github.com/MarvNC/jpdb-freq-list) — place `term_meta_bank_1.json` in `~/.local/share/jp_popup/jpdb_freq/`
