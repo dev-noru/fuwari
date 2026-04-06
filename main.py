@@ -1,8 +1,17 @@
+import os
+
+DB_PATH = os.path.expanduser('~/.local/share/fuwari/fuwari.db')
+
+if not os.path.exists(DB_PATH):
+    from migrate import main as migrate
+    migrate()
+
+from dictionary import DB_PATH
 from bridge import Bridge
 import sys
-import os
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
+
 
 
 app = QGuiApplication(sys.argv)
