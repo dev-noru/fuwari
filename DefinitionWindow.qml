@@ -79,7 +79,6 @@ Window {
                         onClicked: {
                             var s = JSON.parse(bridge.get_settings())
                             var fieldMap = s.field_map
-                            var fields = {}
                             var audio = bridge.store_audio(wordText2.text, readingText.text)
                             var data = {
                                 "Word": wordText2.text,
@@ -88,20 +87,26 @@ Window {
                                 "Sentence": bridge.sentence,
                                 "Sentence Furigana": bridge.sentence,
                                 "Definitions": root.currentResults[0].Definitions.join("\n"),
+                                "Image": "",
                                 "Frequency": freqText.text,
+                                "Sentence Audio": "",
                                 "Audio": audio
                             }
+                            var typedFields = []
                             for (var key in fieldMap) {
-                                fields[fieldMap[key]] = data[key] || ""
-                            }
-                            var result = bridge.add_note(s.deck, s.note_type, JSON.stringify(fields))
-                            if (result !== "") {
-                                mineIcon.color = "green"
-                                Qt.callLater(function() {
-                                    mineIcon.color = palette.highlight
+                                typedFields.push({
+                                    name: fieldMap[key],
+                                    type: key === "Audio" ? "audio" : key === "Sentence Audio" ? "sentence_audio" : key === "Images" ? "image" : "text",
+                                    value: data[key] || ""
                                 })
                             }
-                        }
+                            cardPreviewWindow.deck = s.deck
+                            cardPreviewWindow.noteType = s.note_type
+                            cardPreviewWindow.word = wordText2.text
+                            cardPreviewWindow.reading = readingText.text
+                            cardPreviewWindow.fields = typedFields
+                            cardPreviewWindow.visible = true
+                          }                    
                     }
                 }
             }
