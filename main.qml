@@ -79,6 +79,8 @@ DefinitionWindow { id: definitionWindow }
 // History Window
 HistoryWindow { id: historyWindow }
 
+CardPreviewWindow { id: cardPreviewWindow }
+
 
   MouseArea {
     anchors.fill: parent

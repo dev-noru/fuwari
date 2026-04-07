@@ -7,8 +7,8 @@ Window {
     id: root
     color: palette.base
     title: "Settings"
-    width: 400
-    height: 500
+    width: 450
+    height: 550
     visible: false
     flags: Qt.Window | Qt.WindowStaysOnTopHint
 
@@ -19,10 +19,25 @@ Window {
     property string selectedDeck: ""
     property string selectedNoteType: ""
 
+
     onVisibleChanged: {
         if (visible) {
+            var s = JSON.parse(bridge.get_settings())
             root.decks = JSON.parse(bridge.get_decks())
             root.noteTypes = JSON.parse(bridge.get_note_types())
+            deckCombo.currentIndex = root.decks.indexOf(s.deck)
+            noteTypeCombo.currentIndex = root.noteTypes.indexOf(s.note_type)
+            root.fields = JSON.parse(bridge.get_fields(s.note_type))
+            Qt.callLater (function(){
+              for (var i = 0; i < fieldRepeater.count; i++) {
+                  var row = fieldRepeater.itemAt(i)
+                  var label = row.children[0].text
+                  var combo = row.children[1]
+                  if (s.field_map[label]) {
+                      combo.currentIndex = combo.model.indexOf(s.field_map[label])
+                  }
+              }
+            })
         }
     }
 
@@ -82,18 +97,18 @@ Window {
 
         Repeater {
             id: fieldRepeater
-            model: root.fields.length > 0 ? ["Word", "Reading", "Furigana", "Sentence", "Sentence Furigana", "Definitions", "Frequency", "Audio"] : []
+            model: root.fields.length > 0 ? ["Word", "Reading", "Furigana", "Sentence", "Sentence Furigana", "Sentence Audio", "Definitions", "Images", "Frequency", "Audio"] : []
             Row {
                 spacing: 10
                 width: parent.width
                 Text {
                     text: modelData
                     color: palette.windowText
-                    width: 100
+                    width: 170
                     anchors.verticalCenter: parent.verticalCenter
                 }
                 ComboBox {
-                    width: parent.width - 110
+                    width: parent.width - 190
                     model: ["(none)"].concat(root.fields)
                     popup.height: 200
                 }

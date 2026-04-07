@@ -211,12 +211,29 @@ class Bridge(QObject):
     def get_settings(self):
         return json.dumps(settings)
 
+    # Moving files from the users dir to the anki server for fetching of media in cards.
+    @Slot(str, result=str)
+    def store_media_file(self, file_path):
+        try:
+            clean_path = file_path.replace("file://", "")
+            with open(clean_path, 'rb') as f:
+                data = base64.b64encode(f.read()).decode('utf-8')
+            ext = os.path.splitext(clean_path)[1]
+            filename = f"{int(time.time())}{ext}"
+            ankiconnect_request('storeMediaFile', filename=filename, data=data)
+            return filename
+        except Exception as e:
+            print(f"Store media error: {e}")
+            return ""
+    
+    # Save and loading of the user set anki fields
     @Slot(str)
     def save_settings_slot(self, settings_json):
         global settings
         settings = json.loads(settings_json)
         save_settings(settings)
 
+    # Creation of the lookups
     @Slot(str, result=str)
     def lookup(self, word):
         print(word)
