@@ -1,8 +1,19 @@
 import os
+import sqlite3
 
 DB_PATH = os.path.expanduser('~/.local/share/fuwari/fuwari.db')
+def old_schema_exists():
+    if not os.path.exists(DB_PATH):
+        print("Running migration...")
+        return False
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jmdict'")
+    result = cursor.fetchone()
+    conn.close()
+    return result is not None
 
-if not os.path.exists(DB_PATH):
+if not os.path.exists(DB_PATH) or old_schema_exists():
     from migrate import main as migrate
     migrate()
 
