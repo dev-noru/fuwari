@@ -79,7 +79,18 @@ DefinitionWindow { id: definitionWindow }
 // History Window
 HistoryWindow { id: historyWindow }
 
+// Card Preview Window
 CardPreviewWindow { id: cardPreviewWindow }
+
+// First Run Window
+FirstRunWindow {
+  id: firstWindow
+  Component.onCompleted: {
+      if (!bridge.has_dictionaries()) {
+          firstWindow.visible = false
+      }
+    }
+}
 
 
   MouseArea {

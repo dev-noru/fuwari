@@ -6,11 +6,13 @@ import os
 import base64
 import threading
 import json
+import sqlite3
 from PySide6.QtCore import QObject, Signal, Property, Slot
-from dictionary import tokenize, dictionary, names, frequency, kanji_dict
+from dictionary import tokenize, dictionary, frequency, kanji_dict, parse_structured_content, DB_PATH
 from anki import ankiconnect_request
 from settings import settings, save_settings
 from collections import deque
+from dictionary import cursor
 
 POS_LABELS = {
     'v1': 'Ichidan verb',
@@ -110,6 +112,17 @@ class Bridge(QObject):
         self._words = words
         self.wordsChanged.emit()
         print(words)
+
+    # Checking if the user has any dictionaries
+    @Slot(result=bool)
+    def has_dictionaries(self):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM dictionaries')
+        count = c.fetchone()[0]
+        conn.close()
+        print(f"has_dictionaries: {count}")
+        return count > 0
 
     # Adding history to texts
     @Slot(result=str)
@@ -248,60 +261,45 @@ class Bridge(QObject):
             entries = dictionary(word) or dictionary(hiragana)
             if entries:
                 # sort common entries first
-                entries = sorted(entries, key=lambda e: e['kana'][0].get('common', False), reverse=True)
                 for entry in entries:
-                    reading = entry['kana'][0]['text']
-                    kanji = entry['kanji'][0]['text'] if entry['kanji'] else entry['kana'][0]['text']
+                    reading = entry['reading']
+                    kanji = entry['term']
                     freq_rank = frequency(kanji) or frequency(reading) or None
-                    pos = [POS_LABELS.get(p, p) for p in entry['sense'][0]['partOfSpeech']]
+                    pos = [POS_LABELS.get(p, p) for p in entry['def_tags'].split() if not p.isdigit()]
                     definitions = []
-                    for sense in entry['sense']:
-                        for gloss in sense['gloss']:
-                            definitions.append(f"{len(definitions) + 1}.) {gloss['text']}")
-                    results.append({'source': 'JMdict', 'Kanji': kanji, 'Reading': reading, 'Part of Speech': pos,
+                    for definition in entry['definitions']:
+                        text = parse_structured_content(definition)
+                        if text:
+                            definitions.append(f"{len(definitions) + 1}.) {text}")
+                    results.append({'source': entry['title'], 'Kanji': kanji, 'Reading': reading, 'Part of Speech': pos,
                                     'Frequency': freq_rank, 'Definitions': definitions})
-
-            # JMnedict
-            entry = names(word) or names(hiragana)
-            if entry:
-                reading = entry['kana'][0]['text']
-                kanji = entry['kanji'][0]['text'] if entry['kanji'] else entry['kana'][0]['text']
-                translation_type = entry['translation'][0]['type'][0] if entry['translation'][0]['type'] else 'name'
-                definitions = []
-                for t in entry['translation']:
-                    for trans in t['translation']:
-                        definitions.append(f"{len(definitions) + 1}.) {trans['text']}")
-                results.append({'source': 'JMnedict', 'Kanji': kanji, 'Reading': reading, 
-                                'Part of Speech': [translation_type], 'Frequency': None, 'Definitions': definitions})
 
             # KANJIDIC
             entry = kanji_dict(word)
             if len(word) == 1 and entry:
-                readings = entry['readingMeaning']['groups'][0]['readings']
-                on_readings = [r['value'] for r in readings if r['type'] == 'ja_on']
-                kun_readings = [r['value'] for r in readings if r['type'] == 'ja_kun']
-                meanings = [m['value'] for m in entry['readingMeaning']['groups'][0]['meanings'] if m['lang'] == 'en']
-                results.append({'source': 'KANJIDIC', 'Kanji': entry['literal'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings), 
-                                'Part of Speech': ['Kanji'], 'Frequency': entry['misc'].get('frequency'), 
+                on_readings = entry['onyomi'].split()
+                kun_readings = entry['kunyomi'].split()
+                meanings = entry['meanings']
+                results.append({'source': 'KANJIDIC', 'Kanji': entry['character'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings), 
+                                'Part of Speech': ['Kanji'], 'Frequency': entry['stats'].get('freq'), 
                                 'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)]})
                 
             if not results:
                 for char in word:
                     entry = kanji_dict(char)
                     if entry:
-                        readings = entry['readingMeaning']['groups'][0]['readings']
-                        on_readings = [r['value'] for r in readings if r['type'] == 'ja_on']
-                        kun_readings = [r['value'] for r in readings if r['type'] == 'ja_kun']
-                        meanings = [m['value'] for m in entry['readingMeaning']['groups'][0]['meanings'] if m['lang'] == 'en']
-                        results.append({'source': 'KANJIDIC', 'Kanji': entry['literal'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings),
-                                        'Part of Speech': ['Kanji'], 'Frequency': entry['misc'].get('frequency'),
+                        on_readings = entry['onyomi'].split()
+                        kun_readings = entry['kunyomi'].split()
+                        meanings = entry['meanings']
+                        results.append({'source': 'KANJIDIC', 'Kanji': entry['character'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings), 
+                                        'Part of Speech': ['Kanji'], 'Frequency': entry['stats'].get('freq'), 
                                         'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)]})
 
             if not results:
                 return ""
             return json.dumps(results, ensure_ascii=False)                 
-        except KeyError:
-            print("Text not found")
+        except Exception as e:
+            print(e)
             return ""
     words = Property(list, get_words, set_words, notify=wordsChanged)
 

@@ -1,0 +1,162 @@
+[33mcommit ce6c7a3dc10c35202455c203508773a5fc848e69[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Tue Apr 7 16:16:46 2026 +1000
+
+    Added anki card preview popup when adding an anki card.
+
+[33mcommit eb50f249363971ce368befbee7ec4acbf2dce32d[m[33m ([m[1;33mtag: [m[1;33mv1.1[m[33m)[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Tue Apr 7 03:32:46 2026 +1000
+
+    Updated setup.sh.
+
+[33mcommit 6f9ec81f22a9cb4b28a8c2344852b4fd99511ed1[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Tue Apr 7 03:30:59 2026 +1000
+
+    Updated readme to reflect new changes.
+
+[33mcommit 8a1e4d0405f83483141321afdbb6bf075da4d953[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Tue Apr 7 03:29:26 2026 +1000
+
+    Added new paths for dictionaries.
+
+[33mcommit f0d99cf67961a20aefea1edad9e4898e37a45e97[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Tue Apr 7 03:27:56 2026 +1000
+
+    Created a setup script for easier installation.
+
+[33mcommit 02b4580fe8b9e104a1b796ba49c1e4b03952ea06[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Tue Apr 7 02:08:30 2026 +1000
+
+    Made dependencies easier to install and fixed some mistakes.
+
+[33mcommit e1dce2ed32ad8c8ccc9588a0892a18bc510beeac[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Tue Apr 7 02:05:12 2026 +1000
+
+    Made dependencies easier to install and fixed some mistakes.
+
+[33mcommit c2381759a41b79a66243d379bccc149833d2d5a3[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Tue Apr 7 01:46:53 2026 +1000
+
+    Creates directory to fix the migration issue.
+
+[33mcommit 3a04f59dc07b5ed86edbbab7bb66c8bdf767eed6[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Tue Apr 7 00:59:48 2026 +1000
+
+    Add kanji retokenization fallback for words with no dictionary entry
+
+[33mcommit 2b4e3c02ac5680a54a01e21ff918e1c04e69e369[m[33m ([m[1;33mtag: [m[1;33mv1.0.0[m[33m)[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Mon Apr 6 23:51:00 2026 +1000
+
+    Start up time massively improved by switching to SQLite from pickle loading.
+
+[33mcommit d44efa88a8b4be140537ba1f25fce5178bf9b452[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Mon Apr 6 12:59:35 2026 +1000
+
+    New History feature has been added for seeing previous clipboard captures.
+
+[33mcommit fb32c5083541baa8c48639bce9b10b9854446867[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Mon Apr 6 01:38:27 2026 +1000
+
+    Fixed tokenization with the new surface and lemmas by filtering with nouns.
+
+[33mcommit 2d0f389faa2811595e6f02fe4c97bdec488fea92[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Mon Apr 6 01:36:29 2026 +1000
+
+    Added kanji readings for subsequent dict entries
+
+[33mcommit 1966e47460699151ab7d9d1e33b1d12e0fbe6b7b[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Mon Apr 6 01:17:31 2026 +1000
+
+    Added the full unidic as a dependency
+
+[33mcommit 420bdf15aac3eba87ec26f30a6a5013f643dda5f[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Mon Apr 6 00:20:16 2026 +1000
+
+    Fixed tokenization for names using surface instead of lemma
+
+[33mcommit dd5a3155e8201e13c122b15a8ff866ea45130963[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 23:45:09 2026 +1000
+
+    Unreliable clipboard grabbing. Reverted changes while decreasing polling to 0.1 seconds.
+
+[33mcommit fa5b96adaf557e1a371946a774aa5ade92976fc3[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 21:51:16 2026 +1000
+
+    Made the compositor steps more readable
+
+[33mcommit 938ef2d1cbed36ec531c084530f08fbe54963dc6[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 21:48:56 2026 +1000
+
+    Included steps to make fuwari work with Wayland Compositors
+
+[33mcommit 98c6cde4cf1c08b44d7dd46caafa4314f76b1ff3[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 21:34:03 2026 +1000
+
+    Fixed pathing issues for main.qml
+
+[33mcommit 81d61816850cdf6d59d8dc2f7a1682e937fc7d79[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 21:12:37 2026 +1000
+
+    Replaced the polling clipboard with wl-paste --watch for Wayland
+
+[33mcommit e87546ad9789e5c5a66f69fb6cc867134d7fcbc6[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 17:36:37 2026 +1000
+
+    Update README
+
+[33mcommit 172003e58d56dce155f3ec929fe066c6c3e97080[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 17:27:47 2026 +1000
+
+    Update README and add demo gif
+
+[33mcommit 2082e379fa77e3be49c7af5bf9cc0ea32eaf0844[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 17:23:01 2026 +1000
+
+    Add README
+
+[33mcommit 9923627649c4e5c3e61520f407ba2cbee5838287[m
+Merge: ca8e9a0 54e92f1
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 16:37:52 2026 +1000
+
+    Merge branch 'main' of github.com:dev-noru/fuwari
+
+[33mcommit 54e92f135591299802bc6eeedbae9ec6d113c10f[m
+Author: dev-noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 16:28:56 2026 +1000
+
+    Initial commit
+
+[33mcommit ca8e9a0ad6db23cc99d3bf65abce4e70f51cf663[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 16:21:56 2026 +1000
+
+    Add .gitignore, remove pycache
+
+[33mcommit a27ad22a090d45e32526594dc395c16257f04875[m
+Author: noru <69724224+dev-noru@users.noreply.github.com>
+Date:   Sun Apr 5 16:20:20 2026 +1000
+
+    Initial commit
