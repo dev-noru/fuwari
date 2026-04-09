@@ -6,7 +6,7 @@ A native Wayland Japanese popup dictionary for Linux, inspired by [rampaa/JL](ht
 ## Features
 - Clipboard-based automatic text capture
 - Japanese tokenization via MeCab/fugashi
-- JMdict, JMnedict, and KANJIDIC2 dictionary support built-in
+- Yomitan-format dictionary support
 - JPDB frequency rankings
 - Anki card mining with AnkiConnect and Local Audio Server support (Anki must be running in the background)
 - Follows your system colour scheme via Qt SystemPalette
@@ -49,9 +49,18 @@ python -m unidic download
 ```bash
 git clone https://github.com/dev-noru/fuwari.git
 cd fuwari
-bash setup.sh
 python main.py
 ```
+
+### Dictionary Setup
+On first launch, Fuwari will open a window prompting you to import a dictionary if none are found.
+
+To import a dictionary, drop any Yomitan-format `.zip` file into `~/.local/share/fuwari/dictionaries/` and restart Fuwari.
+
+**Recommended dictionaries:**
+- **Bilingual:** JMdict from [jmdict-yomitan](https://github.com/themoeway/jmdict-yomitan)
+- **Kanji:** KANJIDIC from [jmdict-yomitan](https://github.com/themoeway/jmdict-yomitan)
+- **Monolingual & Frequency:** See [MarvNC's Yomitan dictionary collection](https://github.com/MarvNC/yomitan-dictionaries)
 
 ### Compositor Setups
 Most tiling Wayland compositors will attempt to tile or resize Fuwari's windows. To prevent
@@ -118,7 +127,5 @@ on top of fullscreen applications.
 
 ## Credits
 - [rampaa/JL](https://github.com/rampaa/JL) — Inspiration
-- [scriptin/jmdict-simplified](https://github.com/scriptin/jmdict-simplified) — Dictionary format
-- [EDRDG](https://www.edrdg.org/) — JMdict, JMnedict, and KANJIDIC2 data
 - [polm/fugashi](https://github.com/polm/fugashi) — MeCab Python wrapper
 - [MarvNC/jpdb-freq-list](https://github.com/MarvNC/jpdb-freq-list) — Frequency data
