@@ -8,9 +8,10 @@ import threading
 import json
 import sqlite3
 from PySide6.QtCore import QObject, Signal, Property, Slot
-from dictionary import tokenize, dictionary, frequency, kanji_dict, parse_structured_content, DB_PATH
+from dictionary import get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, DB_PATH
 from anki import ankiconnect_request
 from settings import settings, save_settings
+from migrate import import_dictionary
 from collections import deque
 from dictionary import cursor
 
@@ -57,6 +58,7 @@ class Bridge(QObject):
     clipboardUpdated = Signal()
     sentenceChanged = Signal()
     historyChanged = Signal()
+    dictionaryImported = Signal(bool)
 
     # Class initialization
     def __init__(self):
@@ -112,6 +114,40 @@ class Bridge(QObject):
         self._words = words
         self.wordsChanged.emit()
         print(words)
+
+    #Dictionary Management UI    
+    @Slot(result=str)
+    def get_dictionaries(self):
+        return json.dumps(get_dictionaries())
+
+    @Slot(int, bool)
+    def toggle_dictionary(self, dict_id, enabled):
+        toggle_dictionary(dict_id, enabled)
+
+    @Slot(int, int)
+    def reorder_dictionary(self, dict_id, new_priority):
+        reorder_dictionary(dict_id, new_priority)
+
+    @Slot(int)
+    def delete_dictionary(self, dict_id):
+        delete_dictionary(dict_id)
+
+    #Dictionary install
+    @Slot(str, result=bool)
+    def install_dictionary(self, zip_path):
+        try:
+            def run():
+                try:
+                    import_dictionary(zip_path)
+                    self.dictionaryImported.emit(True)
+                except Exception as e:
+                    print(f"Import error: {e}")
+                    self.dictionaryImported.emit(False)
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            return True
+        except Exception as e:
+            return False
 
     # Checking if the user has any dictionaries
     @Slot(result=bool)
