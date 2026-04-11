@@ -62,6 +62,39 @@ dictionary = lookup_term
 frequency = lookup_frequency
 kanji_dict = lookup_kanji
 
+#Code for getting dictionaries
+def get_dictionaries():
+    cursor.execute('SELECT id, title, enabled, priority FROM dictionaries ORDER BY priority ASC')
+    rows = cursor.fetchall()
+    return [{'id': row[0], 'title': row[1], 'enabled': row[2], 'priority': row[3]} for row in rows]
+
+#Code for toggling dictionaries
+def toggle_dictionary(dict_id, enabled):
+    cursor.execute('UPDATE dictionaries SET enabled = ? WHERE id = ?',
+                   (enabled, dict_id))
+    conn.commit()
+
+#Code for reordering dictionaries
+def reorder_dictionary(dict_id, new_priority):
+    cursor.execute('UPDATE dictionaries SET priority = ? WHERE id = ?',
+                   (new_priority, dict_id))
+    conn.commit()
+
+
+#Code for deleting dictionaries
+def delete_dictionary(dict_id):
+    cursor.execute('SELECT title FROM dictionaries WHERE id = ?',
+                   (dict_id,))
+    title = cursor.fetchone()[0] 
+    delete = os.path.join(os.path.expanduser('~/.local/share/fuwari/dictionaries'), title + '.zip')
+
+    if os.path.exists(delete):
+        os.remove(delete)
+
+    cursor.execute('DELETE FROM dictionaries WHERE id = ?',
+                   (dict_id,))
+    conn.commit()
+
 def tokenize(sentence):
     words = []
     for word in tagger(sentence):
