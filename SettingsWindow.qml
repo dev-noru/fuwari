@@ -14,6 +14,9 @@ Window {
     visible: false
     flags: Qt.Window | Qt.WindowStaysOnTopHint
 
+    // Added SystemPalette
+    SystemPalette { id: palette }
+
     property var decks: []
     property var noteTypes: []
     property var fields: []
@@ -48,13 +51,47 @@ Window {
     TabBar{
           id: tabBar
           width: parent.width
+          // Added TabBar background
+          background: Rectangle { color: palette.base }
               TabButton {
                 id: anki
                 text: "Anki"
+                // Added tab styling with top highlight line
+                contentItem: Text {
+                    text: parent.text
+                    color: palette.windowText
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    color: palette.base
+                    Rectangle {
+                        width: parent.width
+                        height: 2
+                        anchors.top: parent.top
+                        color: tabBar.currentIndex === 0 ? palette.highlight : "transparent"
+                    }
+                }
               }
               TabButton {
                 id: dictionaries
                 text: "Dictionaries"
+                // Added tab styling with top highlight line
+                contentItem: Text {
+                    text: parent.text
+                    color: palette.windowText
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    color: palette.base
+                    Rectangle {
+                        width: parent.width
+                        height: 2
+                        anchors.top: parent.top
+                        color: tabBar.currentIndex === 1 ? palette.highlight : "transparent"
+                    }
+                }
               }
         }
 
@@ -92,6 +129,8 @@ Window {
                   width: parent.width
                   text: root.ankiUrl
                   color: palette.windowText
+                  // Added background styling
+                  background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                   onTextChanged: root.ankiUrl = text
                 }
                 Button {
@@ -100,6 +139,14 @@ Window {
                       root.decks = JSON.parse(bridge.get_decks())
                       root.noteTypes = JSON.parse(bridge.get_note_types())
                   }
+                  // Added button styling
+                  contentItem: Text {
+                      text: parent.text
+                      color: palette.windowText
+                      horizontalAlignment: Text.AlignHCenter
+                      verticalAlignment: Text.AlignVCenter
+                  }
+                  background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                 }
 
                 Text { text: "Deck"; color: palette.windowText }
@@ -108,6 +155,14 @@ Window {
                     width: parent.width
                     model: root.decks
                     onCurrentTextChanged: root.selectedDeck = currentText
+                    // Added combobox styling
+                    contentItem: Text {
+                        text: deckCombo.displayText
+                        color: palette.windowText
+                        verticalAlignment: Text.AlignVCenter
+                        leftPadding: 8
+                    }
+                    background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                 }
                 
                 Text { text: "Note Type"; color: palette.windowText }
@@ -115,6 +170,14 @@ Window {
                     id: noteTypeCombo
                     width: parent.width
                     model: root.noteTypes
+                    // Added combobox styling
+                    contentItem: Text {
+                        text: noteTypeCombo.displayText
+                        color: palette.windowText
+                        verticalAlignment: Text.AlignVCenter
+                        leftPadding: 8
+                    }
+                    background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                 }
                 Button {
                     text: "Load Fields"
@@ -122,6 +185,14 @@ Window {
                         var noteType = root.noteTypes[noteTypeCombo.currentIndex]
                         root.fields = JSON.parse(bridge.get_fields(noteType))
                     }
+                    // Added button styling
+                    contentItem: Text {
+                        text: parent.text
+                        color: palette.windowText
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                 }
 
                 Repeater {
@@ -140,6 +211,14 @@ Window {
                             width: parent.width - 190
                             model: ["(none)"].concat(root.fields)
                             popup.height: 200
+                            // Added combobox styling
+                            contentItem: Text {
+                                text: parent.displayText
+                                color: palette.windowText
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: 8
+                            }
+                            background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                         }
                     }
                   }
@@ -164,6 +243,14 @@ Window {
                           bridge.save_settings_slot(JSON.stringify(s))
                           root.visible = false
                       }
+                      // Added button styling
+                      contentItem: Text {
+                          text: parent.text
+                          color: palette.windowText
+                          horizontalAlignment: Text.AlignHCenter
+                          verticalAlignment: Text.AlignVCenter
+                      }
+                      background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                   }
 
               }
@@ -200,7 +287,8 @@ Window {
                     width: parent.width
                     color: palette.windowText
                     placeholderText: "Search dictionaries..."
-                    background: Rectangle { color: palette.base; border.color: palette.mid; radius: 2 }
+                    // Updated background colour
+                    background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                     onTextChanged: dictItem.searchText = text
                 }
 
@@ -232,7 +320,8 @@ Window {
                             elide: Text.ElideRight
                         }
                         Switch {
-                            checked: modelData.enabled === 1
+                            // Fixed enabled check
+                            checked: modelData.enabled == 1
                             onCheckedChanged: bridge.toggle_dictionary(modelData.id, checked)
                         }
                         Button {
@@ -248,7 +337,8 @@ Window {
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
-                            background: Rectangle { color: palette.button; radius: 2 }
+                            // Updated button colour
+                            background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                         }
                         Column {
                             Button {
@@ -265,7 +355,8 @@ Window {
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                 }
-                                background: Rectangle { color: palette.button; radius: 2 }
+                                // Updated button colour
+                                background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                             }
                             Button {
                                 text: "▼"
@@ -281,7 +372,8 @@ Window {
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                 }
-                                background: Rectangle { color: palette.button; radius: 2 }
+                                // Updated button colour
+                                background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                             }
                         }
                     }
@@ -296,7 +388,8 @@ Window {
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
-                    background: Rectangle { color: palette.button; radius: 2 }
+                    // Updated button colour
+                    background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
                 }
             }
 
@@ -313,5 +406,3 @@ Window {
       }
       
 }
-
-
