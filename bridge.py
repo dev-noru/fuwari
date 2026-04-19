@@ -13,6 +13,7 @@ from anki import ankiconnect_request
 from settings import settings, save_settings
 from migrate import import_dictionary
 from collections import deque
+import websockets
 from dictionary import cursor
 
 POS_LABELS = {
@@ -67,8 +68,15 @@ class Bridge(QObject):
         self._sentence = ""
         self._history = deque(maxlen=100)
         # Below we Thread the UI so it runs at the same time.
-        thread = threading.Thread(target=self.clipboard_watcher, daemon=True)
-        thread.start()
+        source = settings.get('text_source', 'clipboard')
+        if source == 'clipboard':
+            threading.Thread(target=self.clipboard_watcher, daemon=True).start()
+        elif source == 'textractor':
+            threading.Thread(target=self.websocket_watcher, daemon=True,
+                args=(settings.get('textractor_ws_url', 'ws://localhost:6677'),)).start()
+        elif source == 'lunatranslator':
+            threading.Thread(target=self.websocket_watcher, daemon=True,
+                args=(settings.get('lunatranslator_ws_url', 'ws://localhost:2333/api/ws/text/origin'),)).start()
     
     # Processes the clipboard and tokenizes the sentence into separate words.
     def process_clipboard(self, sentence):
@@ -94,6 +102,19 @@ class Bridge(QObject):
                     result_check = result.stdout
             except Exception:
                 pass
+
+    # Websocket watcher
+    def websocket_watcher(self, url):
+        import asyncio
+        async def listen():
+            while True:
+                try:
+                    async with websockets.connect(url) as ws:
+                        async for message in ws:
+                            self.process_clipboard(message)
+                except Exception:
+                    await asyncio.sleep(3)
+        asyncio.run(listen())
 
  
 
