@@ -7,6 +7,7 @@ Item {
     property string textSource: "clipboard"
     property string textractorUrl: "ws://localhost:6677"
     property string lunaUrl: "ws://localhost:2333/api/ws/text/origin"
+    property bool saved: false
 
     function load() {
         var s = JSON.parse(bridge.get_settings())
@@ -65,7 +66,7 @@ Item {
                 s.textractor_ws_url = textractorUrl
                 s.lunatranslator_ws_url = lunaUrl
                 bridge.save_settings_slot(JSON.stringify(s))
-                Window.window.visible = false
+                saved = true
             }
             contentItem: Text {
                 text: parent.text
@@ -74,6 +75,11 @@ Item {
                 verticalAlignment: Text.AlignVCenter
             }
             background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
-        }
+          }
+          Text {
+              visible: saved
+              text: "⚠ Restart Fuwari to apply changes."
+              color: "orange"
+          }
     }
 }
