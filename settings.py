@@ -1,6 +1,7 @@
 import os
 import json
 
+
 SETTINGS_PATH = os.path.expanduser('~/.config/jp_popup/settings.json')
 
 DEFAULT_SETTINGS = {
@@ -11,7 +12,10 @@ DEFAULT_SETTINGS = {
     "main_width": 400,
     "main_height": 100,
     "def_width": 300,
-    "def_height": 200
+    "def_height": 200,
+    'text_source': 'clipboard',
+    'textractor_ws_url': 'ws://localhost:6677',
+    'lunatranslator_ws_url': 'ws://localhost:2333/api/ws/text/origin'
 }
 
 def load_settings():
