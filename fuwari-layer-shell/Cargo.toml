@@ -1,0 +1,12 @@
+[package]
+name = "fuwari-layer-shell"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+smithay-client-toolkit = "0.18"
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.2", features = ["client"] }
+
+[lib]
+crate-type = ["cdylib"]

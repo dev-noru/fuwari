@@ -1,14 +1,13 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
+import org.kde.layershell 1.0 as LayerShell
 
-// This is the definition window where the
-// definitions of the words are displayed.
 Window {
-    flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint | Qt.WindowDoesNotAcceptFocus
+    flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.WindowDoesNotAcceptFocus
     id: root
     width: 300
-    height: 200 
+    height: 200
     minimumHeight: 150
     minimumWidth: 150
     visible: false
@@ -106,7 +105,7 @@ Window {
                             cardPreviewWindow.reading = readingText.text
                             cardPreviewWindow.fields = typedFields
                             cardPreviewWindow.visible = true
-                          }                    
+                        }
                     }
                 }
             }
@@ -194,7 +193,7 @@ Window {
                                     }
                                 }
                             }
-                          }
+                        }
                         Text {
                             text: modelData.Kanji
                             color: palette.windowText
@@ -223,6 +222,4 @@ Window {
             }
         }
     }
-  }  
-
-
+}

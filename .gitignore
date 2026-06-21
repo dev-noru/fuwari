@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 *.arc
+fuwari-layer-shell/target/
+__pycache__/
+fuwari-layer-shell/target/
+__pycache__/

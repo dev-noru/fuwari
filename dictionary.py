@@ -95,6 +95,8 @@ def delete_dictionary(dict_id):
                    (dict_id,))
     conn.commit()
 
+
+# Tokenizes the text so it is searchable.
 def tokenize(sentence):
     words = []
     for word in tagger(sentence):
