@@ -60,14 +60,15 @@ class Bridge(QObject):
     sentenceChanged = Signal()
     historyChanged = Signal()
     dictionaryImported = Signal(bool)
+    ocrLoadingChanged = Signal()
 
-    # Class initialization
     def __init__(self):
         super().__init__()
         self._words = []
         self._sentence = ""
         self._history = deque(maxlen=100)
-        # Below we Thread the UI so it runs at the same time.
+        self._ocr = None
+        self._ocr_loading = False
         source = settings.get('text_source', 'clipboard')
         if source == 'clipboard':
             threading.Thread(target=self.clipboard_watcher, daemon=True).start()
@@ -77,8 +78,7 @@ class Bridge(QObject):
         elif source == 'lunatranslator':
             threading.Thread(target=self.websocket_watcher, daemon=True,
                 args=(settings.get('lunatranslator_ws_url', 'ws://localhost:2333/api/ws/text/origin'),)).start()
-    
-    # Processes the clipboard and tokenizes the sentence into separate words.
+
     def process_clipboard(self, sentence):
         self.set_sentence(sentence.strip())
         words = tokenize(sentence)
@@ -86,8 +86,7 @@ class Bridge(QObject):
         self.set_words(words)
         self.clipboardUpdated.emit()
         self.historyChanged.emit()
-        
-    # Watches the clipboard to grab.
+
     def clipboard_watcher(self):
         is_wayland = bool(os.getenv('WAYLAND_DISPLAY'))
         clipboard_cmd = ['wl-paste'] if is_wayland else ['xclip', '-selection', 'clipboard', '-o']
@@ -103,7 +102,6 @@ class Bridge(QObject):
             except Exception:
                 pass
 
-    # Websocket watcher
     def websocket_watcher(self, url):
         import asyncio
         async def listen():
@@ -115,9 +113,6 @@ class Bridge(QObject):
                 except Exception:
                     await asyncio.sleep(3)
         asyncio.run(listen())
-
- 
-
 
     def get_sentence(self):
         return self._sentence
@@ -136,7 +131,43 @@ class Bridge(QObject):
         self.wordsChanged.emit()
         print(words)
 
-    #Dictionary Management UI    
+    words = Property(list, get_words, set_words, notify=wordsChanged)
+
+    #OCR loading display
+    def _get_ocr_loading(self):
+        return self._ocr_loading
+
+    def _set_ocr_loading(self, value):
+        self._ocr_loading = value
+        self.ocrLoadingChanged.emit()
+
+    ocrLoading = Property(bool, _get_ocr_loading, notify=ocrLoadingChanged)
+
+    @Slot()
+    def toggle_ocr(self):
+        if self._ocr and self._ocr._running:
+            self._ocr.stop()
+            self._ocr = None
+            return
+
+        def start_ocr():
+            env = os.environ.copy()
+            env.pop("WAYLAND_SOCKET", None)
+            result = subprocess.run(['slurp'], capture_output=True, text=True, env=env)
+            if result.returncode != 0 or not result.stdout.strip():
+                return
+            region = result.stdout.strip()
+            from ocr import OCRThread, is_pipeline_loaded, ensure_pipeline_loaded
+            if not is_pipeline_loaded():
+                self._set_ocr_loading(True)
+                ensure_pipeline_loaded()
+                self._set_ocr_loading(False)
+            self._ocr = OCRThread(self.process_clipboard)
+            self._ocr.set_region(region)
+            self._ocr.start()
+
+        threading.Thread(target=start_ocr, daemon=True).start()
+
     @Slot(result=str)
     def get_dictionaries(self):
         return json.dumps(get_dictionaries())
@@ -153,7 +184,6 @@ class Bridge(QObject):
     def delete_dictionary(self, dict_id):
         delete_dictionary(dict_id)
 
-    #Dictionary install
     @Slot(str, result=bool)
     def install_dictionary(self, zip_path):
         try:
@@ -170,7 +200,6 @@ class Bridge(QObject):
         except Exception as e:
             return False
 
-    # Checking if the user has any dictionaries
     @Slot(result=bool)
     def has_dictionaries(self):
         conn = sqlite3.connect(DB_PATH)
@@ -181,12 +210,10 @@ class Bridge(QObject):
         print(f"has_dictionaries: {count}")
         return count > 0
 
-    # Adding history to texts
     @Slot(result=str)
     def get_history(self):
         return json.dumps(list(self._history))
 
-    # Grabbing audio of the definition.
     @Slot(str, str, result=str)
     def get_audio(self, term, reading):
         try:
@@ -202,14 +229,14 @@ class Bridge(QObject):
         except Exception as e:
             print(f"Audio error: {e}")
             return ""
-    # Plays the grabbed audio from above ^
+
     @Slot(str)
     def play_audio(self, url):
         try:
             subprocess.Popen(['mpv', '--no-video', url])
         except Exception as e:
             print(f"Playback error: {e}")
-    # Saves the audio for anki card creation
+
     @Slot(str, str, result=str)
     def store_audio(self, term, reading):
         try:
@@ -231,7 +258,6 @@ class Bridge(QObject):
             print(f"Store audio error: {e}")
             return ""
 
-    # Getting anki decks
     @Slot(result=str)
     def get_decks(self):
         try:
@@ -240,7 +266,7 @@ class Bridge(QObject):
         except Exception as e:
             print(f"AnkiConnect error: {e}")
             return "[]"
-    # Getting note types from anki
+
     @Slot(result=str)
     def get_note_types(self):
         try:
@@ -249,7 +275,7 @@ class Bridge(QObject):
         except Exception as e:
             print(f"AnkiConnect error: {e}")
             return "[]"
-    # Getting the fields populating the note type
+
     @Slot(str, result=str)
     def get_fields(self, note_type):
         try:
@@ -258,9 +284,8 @@ class Bridge(QObject):
             return json.dumps(fields)
         except Exception as e:
             print(f"AnkiConnect error: {e}")
-            return "[]" 
+            return "[]"
 
-    # The making of the anki cards
     @Slot(str, str, str, result=str)
     def add_note(self, deck, note_type, fields_json):
         try:
@@ -270,18 +295,18 @@ class Bridge(QObject):
                 'modelName': note_type,
                 'fields': fields,
                 'options': {'allowDuplicate': False}
-                })
+            })
             print(f"Adding note: deck={deck}, note_type={note_type}, fields={fields}")
             print(f"Result: {result}")
             return json.dumps(result)
         except Exception as e:
             print(f"AnkiConnect error: {e}")
             return ""
+
     @Slot(result=str)
     def get_settings(self):
         return json.dumps(settings)
 
-    # Moving files from the users dir to the anki server for fetching of media in cards.
     @Slot(str, result=str)
     def store_media_file(self, file_path):
         try:
@@ -295,29 +320,23 @@ class Bridge(QObject):
         except Exception as e:
             print(f"Store media error: {e}")
             return ""
-    
-    # Save and loading of the user set anki fields
+
     @Slot(str)
     def save_settings_slot(self, settings_json):
         global settings
         settings = json.loads(settings_json)
         save_settings(settings)
 
-    # Creation of the lookups
     @Slot(str, result=str)
     def lookup(self, word):
         print(word)
         try:
             word = word.split('-')[0]
             hiragana = katakana_to_hiragana(word)
-        
-            # Find the entry
             results = []
 
-            # JMdict
             entries = dictionary(word) or dictionary(hiragana)
             if entries:
-                # sort common entries first
                 for entry in entries:
                     reading = entry['reading']
                     kanji = entry['term']
@@ -331,16 +350,15 @@ class Bridge(QObject):
                     results.append({'source': entry['title'], 'Kanji': kanji, 'Reading': reading, 'Part of Speech': pos,
                                     'Frequency': freq_rank, 'Definitions': definitions})
 
-            # KANJIDIC
             entry = kanji_dict(word)
             if len(word) == 1 and entry:
                 on_readings = entry['onyomi'].split()
                 kun_readings = entry['kunyomi'].split()
                 meanings = entry['meanings']
-                results.append({'source': 'KANJIDIC', 'Kanji': entry['character'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings), 
-                                'Part of Speech': ['Kanji'], 'Frequency': entry['stats'].get('freq'), 
+                results.append({'source': 'KANJIDIC', 'Kanji': entry['character'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings),
+                                'Part of Speech': ['Kanji'], 'Frequency': entry['stats'].get('freq'),
                                 'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)]})
-                
+
             if not results:
                 for char in word:
                     entry = kanji_dict(char)
@@ -348,16 +366,13 @@ class Bridge(QObject):
                         on_readings = entry['onyomi'].split()
                         kun_readings = entry['kunyomi'].split()
                         meanings = entry['meanings']
-                        results.append({'source': 'KANJIDIC', 'Kanji': entry['character'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings), 
-                                        'Part of Speech': ['Kanji'], 'Frequency': entry['stats'].get('freq'), 
+                        results.append({'source': 'KANJIDIC', 'Kanji': entry['character'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings),
+                                        'Part of Speech': ['Kanji'], 'Frequency': entry['stats'].get('freq'),
                                         'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)]})
 
             if not results:
                 return ""
-            return json.dumps(results, ensure_ascii=False)                 
+            return json.dumps(results, ensure_ascii=False)
         except Exception as e:
             print(e)
             return ""
-    words = Property(list, get_words, set_words, notify=wordsChanged)
-
-
