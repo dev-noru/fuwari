@@ -1,7 +1,47 @@
+# Python / virtual environments
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.dll
+*.egg
+*.egg-info/
+dist/
+build/
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Rust (fuwari-layer-shell target)
+fuwari-layer-shell/target/
+
+# AppImage build artifacts
+Fuwari.AppDir/
+squashfs-root/
+*.AppImage
+*.AppImage.*
+*.AppImage-*
+appimagetool-*.AppImage
+python3.11*-manylinux2014_x86_64.AppImage
+
+# UniDic cache (if you ever place it locally)
+.unidic_cache/
+
+# IDE / system files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.tmp
+*.log
+
+# Other archives
 *.arc
-fuwari-layer-shell/target/
-__pycache__/
-fuwari-layer-shell/target/
-__pycache__/
+
+# (Optional) keep the build script and source files
+# build-appimage.sh, *.py, *.qml, requirements.txt, fuwari.desktop, fuwari.png are tracked
