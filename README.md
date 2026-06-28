@@ -27,28 +27,26 @@ To install Fuwari:
 ```bash
 sudo pacman -S pyside6 python-pip wl-clipboard
 yay -S mecab-git
-pip install fugashi unidic --break-system-packages
-python -m unidic download
 ```
 
 **Debian/Ubuntu:**
 ```bash
 sudo apt install mecab libmecab-dev mecab-ipadic-utf8
-pip install fugashi unidic --break-system-packages
-python -m unidic download
 ```
 
 **Other distros:**
 Install MeCab and a MeCab dictionary for your distro, then:
-```bash
-pip install fugashi unidic --break-system-packages
-python -m unidic download
-```
+
 
 **To Run Fuwari:**
 ```bash
 git clone https://github.com/dev-noru/fuwari.git
 cd fuwari
+python3 -m venv env --system-site-packages
+# must be in bash for this
+source env/bin/activate
+pip install fugashi unidic
+python -m unidic download
 python main.py
 ```
 
