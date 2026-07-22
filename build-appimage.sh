@@ -12,6 +12,7 @@ export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt  # manylinux py needs th
 
 # ── 0. prerequisites: fail early, not after a 1GB download ───────────
 command -v appimagetool >/dev/null || { echo "ERROR: appimagetool missing (AUR: appimagetool-bin)"; exit 1; }
+command -v cargo >/dev/null || { echo "ERROR: cargo missing (rustup or pacman: rust)"; exit 1; }
 [ -f "$SRC/requirements.txt" ] || { echo "ERROR: requirements.txt missing"; exit 1; }
 [ -f "$SRC/fuwari.desktop" ]   || { echo "ERROR: fuwari.desktop missing"; exit 1; }
 [ -f "$SRC/fuwari.png" ]       || { echo "ERROR: fuwari.png missing"; exit 1; }
@@ -44,9 +45,16 @@ else
   mkdir -p "$UNIDIC_CACHE"; cp -rT "$DICDIR" "$UNIDIC_CACHE"
 fi
 
-# ── 4. Fuwari source (copied in untouched; runs in place) ────────────
+# ── 4. Fuwari source + native layer-shell .so ────────────────────────
 install -d "$APPDIR/opt/fuwari"
 cp "$SRC"/*.py "$SRC"/*.qml "$APPDIR/opt/fuwari/"
+
+# build the release .so and bundle it at the path layer_shell.py expects
+echo "Building layer-shell crate (release)..."
+( cd "$SRC/fuwari-layer-shell" && cargo build --release )
+install -d "$APPDIR/opt/fuwari/fuwari-layer-shell/target/release"
+cp "$SRC/fuwari-layer-shell/target/release/libfuwari_layer_shell.so" \
+   "$APPDIR/opt/fuwari/fuwari-layer-shell/target/release/"
 
 # ── 5. wl-paste (clipboard texthook; SteamOS may not ship wl-clipboard) ──
 cp "$(command -v wl-paste)" "$APPDIR/usr/bin/" 2>/dev/null || echo "WARN: wl-paste not bundled"
