@@ -1,0 +1,7 @@
+PySide6
+meikiocr
+websockets
+Pillow
+numpy
+fugashi
+unidic
