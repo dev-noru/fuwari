@@ -7,6 +7,10 @@ edition = "2024"
 smithay-client-toolkit = "0.18"
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.2", features = ["client"] }
+grim-rs = "0.2"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[dev-dependencies]
+grim-rs = "0.2"
