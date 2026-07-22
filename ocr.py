@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-import subprocess
 import threading
 import time
 import difflib
-import io
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-
-import numpy as np
-from PIL import Image
 
 SCAN_INTERVAL = 0.5
 SIMILARITY_THRESHOLD = 0.9
@@ -86,6 +81,7 @@ def _get_pipeline() -> OCRPipeline:
                 _pipeline = MeikiPipeline()
     return _pipeline
 
+
 def is_pipeline_loaded() -> bool:
     return _pipeline is not None
 
@@ -95,8 +91,9 @@ def ensure_pipeline_loaded() -> None:
 
 
 class OCRThread:
-    def __init__(self, callback):
+    def __init__(self, callback, layershell):
         self._callback = callback
+        self._layershell = layershell
         self._running = False
         self._thread = None
         self._region = None
@@ -118,15 +115,13 @@ class OCRThread:
         self._region = region_str
 
     def _capture(self):
-        cmd = ['grim', '-t', 'png']
-        if self._region:
-            cmd += ['-g', self._region]
-        cmd += ['-']
-        result = subprocess.run(cmd, capture_output=True)
-        if result.returncode != 0:
+        if not self._region:
             return None
-        img = Image.open(io.BytesIO(result.stdout)).convert('RGB')
-        return np.array(img)
+        # region_str is slurp's "x,y WxH" (layout coords)
+        xy, wh = self._region.split()
+        x, y = map(int, xy.split(','))
+        w, h = map(int, wh.split('x'))
+        return self._layershell.capture(x, y, w, h)
 
     @staticmethod
     def _to_sentence(regions):

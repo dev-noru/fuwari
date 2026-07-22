@@ -68,6 +68,7 @@ class Bridge(QObject):
         self._sentence = ""
         self._history = deque(maxlen=100)
         self._ocr = None
+        self._layershell = None
         self._ocr_loading = False
         source = settings.get('text_source', 'clipboard')
         if source == 'clipboard':
@@ -151,18 +152,18 @@ class Bridge(QObject):
             return
 
         def start_ocr():
-            env = os.environ.copy()
-            env.pop("WAYLAND_SOCKET", None)
-            result = subprocess.run(['slurp'], capture_output=True, text=True, env=env)
-            if result.returncode != 0 or not result.stdout.strip():
+            if self._layershell is None:
+                from layer_shell import LayerShell
+                self._layershell = LayerShell()
+            region = self._layershell.select_region()
+            if not region:
                 return
-            region = result.stdout.strip()
             from ocr import OCRThread, is_pipeline_loaded, ensure_pipeline_loaded
             if not is_pipeline_loaded():
                 self._set_ocr_loading(True)
                 ensure_pipeline_loaded()
                 self._set_ocr_loading(False)
-            self._ocr = OCRThread(self.process_clipboard)
+            self._ocr = OCRThread(self.process_clipboard, self._layershell)
             self._ocr.set_region(region)
             self._ocr.start()
 
