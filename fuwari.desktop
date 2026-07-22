@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Fuwari
+Exec=AppRun
+Icon=fuwari
+Categories=Education;Utility;
+Terminal=false

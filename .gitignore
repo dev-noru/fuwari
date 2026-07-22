@@ -45,3 +45,4 @@ python3.11*-manylinux2014_x86_64.AppImage
 
 # (Optional) keep the build script and source files
 # build-appimage.sh, *.py, *.qml, requirements.txt, fuwari.desktop, fuwari.png are tracked
+fuwari-layer-shell/test_capture.png

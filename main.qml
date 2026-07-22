@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
-import org.kde.layershell 1.0 as LayerShell
 
 Window {
   id: mainWindow
