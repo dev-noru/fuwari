@@ -47,15 +47,26 @@ def lookup_kanji(character):
     return {'character': row[0], 'onyomi': row[1], 'kunyomi': row[2], 'tags': row[3], 'meanings': json.loads(row[4]), 'stats': json.loads(row[5])}
 
 
-# Yomitan style definitons parser
-def parse_structured_content(content):
+def _inline(content):
     if isinstance(content, str):
         return content
-    if isinstance(content, list):
-        return ' '.join(filter(None, [parse_structured_content(item) for item in content]))
     if isinstance(content, dict):
-        return parse_structured_content(content.get('content', ''))
+        inner = content.get('content', '')
+        if content.get('tag') == 'ul':
+            items = inner if isinstance(inner, list) else [inner]
+            return '; '.join(p for p in (_inline(i) for i in items) if p)
+        return _inline(inner)
+    if isinstance(content, list):
+        return ''.join(p for p in (_inline(i) for i in content) if p)
     return ''
+
+def parse_structured_content(content):
+    # top level: each category (glossary / notes / references) on its own line
+    if isinstance(content, dict):
+        content = content.get('content', '')
+    if isinstance(content, list):
+        return '\n'.join(p for p in (_inline(i) for i in content) if p)
+    return _inline(content)
 
 # Return each of the functions as an easy to read variable
 dictionary = lookup_term

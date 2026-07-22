@@ -335,21 +335,36 @@ class Bridge(QObject):
             word = word.split('-')[0]
             hiragana = katakana_to_hiragana(word)
             results = []
-
             entries = dictionary(word) or dictionary(hiragana)
             if entries:
+                # group rows by (title, term, reading), preserving first-seen order
+                groups = {}
+                order = []
                 for entry in entries:
-                    reading = entry['reading']
-                    kanji = entry['term']
+                    key = (entry['title'], entry['term'], entry['reading'])
+                    if key not in groups:
+                        groups[key] = []
+                        order.append(key)
+                    groups[key].append(entry)
+
+                for key in order:
+                    rows = groups[key]
+                    title, kanji, reading = key
+                    first = rows[0]
                     freq_rank = frequency(kanji) or frequency(reading) or None
-                    pos = [POS_LABELS.get(p, p) for p in entry['def_tags'].split() if not p.isdigit()]
+                    pos = [POS_LABELS.get(p, p) for p in first['def_tags'].split() if not p.isdigit()]
+
+                    # flatten every sense from every row in this group, numbered continuously
                     definitions = []
-                    for definition in entry['definitions']:
-                        text = parse_structured_content(definition)
-                        if text:
-                            definitions.append(f"{len(definitions) + 1}.) {text}")
-                    results.append({'source': entry['title'], 'Kanji': kanji, 'Reading': reading, 'Part of Speech': pos,
-                                    'Frequency': freq_rank, 'Definitions': definitions})
+                    for row in rows:
+                        for definition in row['definitions']:
+                            text = parse_structured_content(definition)
+                            if text:
+                                definitions.append(f"{len(definitions) + 1}.) {text}")
+
+                    results.append({'source': title, 'Kanji': kanji, 'Reading': reading,
+                                    'Part of Speech': pos, 'Frequency': freq_rank,
+                                    'Definitions': definitions})
 
             entry = kanji_dict(word)
             if len(word) == 1 and entry:
