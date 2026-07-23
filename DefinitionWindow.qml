@@ -2,6 +2,8 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
 
+pragma ComponentBehavior: Bound
+
 Window {
     flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.WindowDoesNotAcceptFocus
     id: root
@@ -156,6 +158,10 @@ Window {
             Repeater {
                 model: root.currentResults
                 Rectangle {
+                    id: entryCard
+                    required property var modelData
+                    required property int index
+                    property var entry: modelData
                     width: contentCol.width - 20
                     height: entryCol.implicitHeight + 12
                     color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.05)
@@ -208,13 +214,101 @@ Window {
                             font.family: "Noto Sans CJK JP"
                             visible: index > 0
                         }
-                        Text {
+                        Column {
                             width: parent.width
-                            text: modelData.Definitions.join("\n")
-                            wrapMode: Text.Wrap
-                            color: palette.windowText
-                            font.pointSize: 8
-                            font.family: "Noto Sans CJK JP"
+                            spacing: 9
+
+                            Repeater {
+                                model: entry.Senses
+                                Column {
+                                    id: senseCol
+                                    property var sense: modelData
+                                    required property var modelData
+                                    width: parent.width
+                                    spacing: 3
+
+                                    Row {
+                                        id: glossRow
+                                        width: parent.width
+                                        spacing: 6
+
+                                        Rectangle {
+                                            id: numBadge
+                                            color: Qt.rgba(palette.highlight.r, palette.highlight.g, palette.highlight.b, 0.2)
+                                            border.color: palette.highlight
+                                            border.width: 1
+                                            radius: 4
+                                            width: numText.implicitWidth + 10
+                                            height: numText.implicitHeight + 4
+                                            Text {
+                                                id: numText
+                                                anchors.centerIn: parent
+                                                text: senseCol.sense.num
+                                                color: palette.highlight
+                                                font.pointSize: 7
+                                                font.bold: true
+                                            }
+                                        }
+
+                                        Text {
+                                            width: glossRow.width - numBadge.width - glossRow.spacing
+                                            text: senseCol.sense.glosses
+                                            wrapMode: Text.Wrap
+                                            color: palette.windowText
+                                            font.pointSize: 8
+                                            font.family: "Noto Sans CJK JP"
+                                        }
+                                    }
+
+                                    Repeater {
+                                        model: senseCol.sense.notes
+                                        Text {
+                                            required property var modelData
+                                            property real indent: 22
+                                            property real colWidth: senseCol.width
+                                            x: indent
+                                            width: colWidth - indent
+                                            text: "※ " + modelData
+                                            wrapMode: Text.Wrap
+                                            color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.55)
+                                            font.pointSize: 7
+                                            font.family: "Noto Sans CJK JP"
+                                        }
+                                    }
+
+                                    Repeater {
+                                        model: senseCol.sense.refs
+                                        Text {
+                                            required property var modelData
+                                            property real indent: 22
+                                            property real colWidth: senseCol.width
+                                            x: indent
+                                            width: colWidth - indent
+                                            text: "→ " + modelData
+                                            wrapMode: Text.Wrap
+                                            color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.55)
+                                            font.pointSize: 7
+                                            font.family: "Noto Sans CJK JP"
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row {
+                                visible: entry.Related && entry.Related.length > 0
+                                spacing: 6
+                                Text {
+                                    text: "related forms"
+                                    color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.45)
+                                    font.pointSize: 7
+                                }
+                                Text {
+                                    text: entry.Related ? entry.Related.join(" · ") : ""
+                                    color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.7)
+                                    font.pointSize: 7
+                                    font.family: "Noto Sans CJK JP"
+                                }
+                            }
                         }
                     }
                 }
