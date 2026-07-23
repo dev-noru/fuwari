@@ -89,9 +89,10 @@ class Bridge(QObject):
                 args=(settings.get('lunatranslator_ws_url', 'ws://localhost:2333/api/ws/text/origin'),)).start()
 
     def process_clipboard(self, sentence):
-        self.set_sentence(sentence.strip())
+        sentence = sentence.strip()
+        self.set_sentence(sentence)
         words = tokenize(sentence)
-        self._history.append({'sentence': sentence.strip(), 'words': words})
+        self._history.append({'sentence': sentence, 'words': words})
         self.set_words(words)
         self.clipboardUpdated.emit()
         self.historyChanged.emit()
