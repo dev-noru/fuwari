@@ -86,7 +86,7 @@ Window {
                                 "Furigana": wordText2.text + "[" + readingText.text + "]",
                                 "Sentence": bridge.sentence,
                                 "Sentence Furigana": bridge.sentence,
-                                "Definitions": root.currentResults[0].Definitions.join("\n"),
+                                "Definitions": root.currentResults[0].Definitions.join("<br>"),
                                 "Image": "",
                                 "Frequency": freqText.text,
                                 "Sentence Audio": "",
