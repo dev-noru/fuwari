@@ -8,13 +8,14 @@ import threading
 import json
 import sqlite3
 from PySide6.QtCore import QObject, Signal, Property, Slot
-from dictionary import get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, DB_PATH
+from dictionary import get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, parse_sense, DB_PATH
 from anki import ankiconnect_request
 from settings import settings, save_settings
 from migrate import import_dictionary
 from collections import deque
 import websockets
 from dictionary import cursor
+import re
 
 POS_LABELS = {
     'v1': 'Ichidan verb',
@@ -53,6 +54,13 @@ POS_LABELS = {
 
 def katakana_to_hiragana(text):
     return ''.join(chr(ord(c) - 0x60) if 'ァ' <= c <= 'ン' else c for c in text)
+
+_LATIN = re.compile(r'[A-Za-z]')
+
+def _is_related_form(sense):
+    """Bare cross-reference 'senses' that are just a kanji form, e.g. 屋's 6.) 屋."""
+    joined = ''.join(sense['glosses'])
+    return bool(joined) and not _LATIN.search(joined) and len(joined) <= 4
 
 class Bridge(QObject):
     wordsChanged = Signal()
@@ -355,16 +363,30 @@ class Bridge(QObject):
                     pos = [POS_LABELS.get(p, p) for p in first['def_tags'].split() if not p.isdigit()]
 
                     # flatten every sense from every row in this group, numbered continuously
-                    definitions = []
+                    senses = []
+                    related = []
                     for row in rows:
                         for definition in row['definitions']:
-                            text = parse_structured_content(definition)
-                            if text:
-                                definitions.append(f"{len(definitions) + 1}.) {text}")
+                            sense = parse_sense(definition)
+                            if not (sense['glosses'] or sense['notes'] or sense['refs']):
+                                continue
+                            if _is_related_form(sense):
+                                related.extend(sense['glosses'])
+                                continue
+                            senses.append({
+                                'num': len(senses) + 1,
+                                'glosses': '; '.join(sense['glosses']),
+                                'notes': sense['notes'],
+                                'refs': sense['refs'],
+                            })
 
-                    results.append({'source': title, 'Kanji': kanji, 'Reading': reading,
-                                    'Part of Speech': pos, 'Frequency': freq_rank,
-                                    'Definitions': definitions})
+                    results.append({
+                        'source': title, 'Kanji': kanji, 'Reading': reading,
+                        'Part of Speech': pos, 'Frequency': freq_rank,
+                        'Senses': senses, 'Related': related,
+                        # flat form kept for Anki mining
+                        'Definitions': [f"{s['num']}.) {s['glosses']}" for s in senses],
+                    })
 
             entry = kanji_dict(word)
             if len(word) == 1 and entry:
@@ -373,7 +395,10 @@ class Bridge(QObject):
                 meanings = entry['meanings']
                 results.append({'source': 'KANJIDIC', 'Kanji': entry['character'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings),
                                 'Part of Speech': ['Kanji'], 'Frequency': entry['stats'].get('freq'),
-                                'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)]})
+                                'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)],
+                                'Senses': [{'num': i + 1, 'glosses': m, 'notes': [], 'refs': []}
+                                           for i, m in enumerate(meanings)],
+                                'Related': []})
 
             if not results:
                 for char in word:
@@ -384,7 +409,10 @@ class Bridge(QObject):
                         meanings = entry['meanings']
                         results.append({'source': 'KANJIDIC', 'Kanji': entry['character'], 'Reading': '、'.join(on_readings) + ' / ' + '、'.join(kun_readings),
                                         'Part of Speech': ['Kanji'], 'Frequency': entry['stats'].get('freq'),
-                                        'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)]})
+                                        'Definitions': [f"{i+1}.) {m}" for i, m in enumerate(meanings)],
+                                        'Senses': [{'num': i + 1, 'glosses': m, 'notes': [], 'refs': []}
+                                                   for i, m in enumerate(meanings)],
+                                        'Related': []})
 
             if not results:
                 return ""

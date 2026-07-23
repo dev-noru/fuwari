@@ -48,25 +48,65 @@ def lookup_kanji(character):
 
 
 def _inline(content):
+    """Flatten inline content (li children, links, spans) into one string."""
     if isinstance(content, str):
         return content
     if isinstance(content, dict):
-        inner = content.get('content', '')
-        if content.get('tag') == 'ul':
-            items = inner if isinstance(inner, list) else [inner]
-            return '; '.join(p for p in (_inline(i) for i in items) if p)
-        return _inline(inner)
+        return _inline(content.get('content', ''))
     if isinstance(content, list):
         return ''.join(p for p in (_inline(i) for i in content) if p)
     return ''
 
+
+def _ul_items(block):
+    """The li items of a ul block, as strings."""
+    inner = block.get('content', '')
+    items = inner if isinstance(inner, list) else [inner]
+    return [t for t in (_inline(i) for i in items) if t]
+
+
+def parse_sense(definition):
+    """
+    Parse one definition into {'glosses': [...], 'notes': [...], 'refs': [...]}.
+    Yomitan labels each top-level ul via data.content
+    ('glossary' / 'notes' / 'references'); unlabelled is treated as a gloss.
+    """
+    sense = {'glosses': [], 'notes': [], 'refs': []}
+
+    if isinstance(definition, str):          # plain-string dictionaries
+        sense['glosses'].append(definition)
+        return sense
+    if not isinstance(definition, dict):
+        return sense
+
+    blocks = definition.get('content', '')
+    if isinstance(blocks, str):
+        sense['glosses'].append(blocks)
+        return sense
+    if isinstance(blocks, dict):
+        blocks = [blocks]
+
+    for block in blocks:
+        if not isinstance(block, dict):
+            text = _inline(block)
+            if text:
+                sense['glosses'].append(text)
+            continue
+        category = (block.get('data') or {}).get('content', '')
+        items = _ul_items(block)
+        if category == 'notes':
+            sense['notes'].extend(items)
+        elif category == 'references':
+            sense['refs'].extend(items)
+        else:
+            sense['glosses'].extend(items)
+    return sense
+
+
 def parse_structured_content(content):
-    # top level: each category (glossary / notes / references) on its own line
-    if isinstance(content, dict):
-        content = content.get('content', '')
-    if isinstance(content, list):
-        return '\n'.join(p for p in (_inline(i) for i in content) if p)
-    return _inline(content)
+    """Flat-string version, kept for any caller that just wants text."""
+    s = parse_sense(content)
+    return '\n'.join(p for p in ['; '.join(s['glosses']), *s['notes'], *s['refs']] if p)
 
 # Return each of the functions as an easy to read variable
 dictionary = lookup_term
