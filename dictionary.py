@@ -150,10 +150,18 @@ def delete_dictionary(dict_id):
 # Tokenizes the text so it is searchable.
 def tokenize(sentence):
     words = []
+    cursor = 0
     for word in tagger(sentence):
+        surface = word.surface
+        # find the real offset; MeCab doesn't always emit whitespace as a token
+        start = sentence.find(surface, cursor)
+        if start == -1:
+            start = cursor
+        end = start + len(surface)
+        cursor = end
         if word.feature.pos1 == '名詞':
-            words.append({'surface': word.surface, 'lemma': word.surface})
+            lemma = surface
         else:
-            words.append({'surface': word.surface, 'lemma': word.feature.lemma or word.surface})
-
+            lemma = word.feature.lemma or surface
+        words.append({'surface': surface, 'lemma': lemma, 'start': start, 'end': end})
     return words

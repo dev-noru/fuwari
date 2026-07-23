@@ -18,12 +18,16 @@ Window {
     property string reading: ""
     property string pos: ""
     property string freq: ""
+    property bool popupHovered: popupHover.hovered
 
     Flickable {
         anchors.fill: parent
         contentHeight: contentCol.implicitHeight
         clip: true
         rightMargin: 8
+
+        HoverHandler { id: popupHover }
+
         ScrollBar.vertical: ScrollBar {
             policy: contentCol.implicitHeight > root.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
             background: Rectangle { color: palette.base }
@@ -44,9 +48,11 @@ Window {
             Row {
                 width: parent.width
                 spacing: 8
-                Text {
+                TextEdit {
                     id: wordText2
                     text: root.word
+                    readOnly: true
+                    selectByMouse: true
                     wrapMode: Text.Wrap
                     color: palette.windowText
                     font.bold: true
@@ -86,7 +92,7 @@ Window {
                                 "Furigana": wordText2.text + "[" + readingText.text + "]",
                                 "Sentence": bridge.sentence,
                                 "Sentence Furigana": bridge.sentence,
-                                "Definitions": root.currentResults[0].Definitions.join("<br>"),
+                                "Definitions": root.currentResults[0].Definitions.join("\n"),
                                 "Image": "",
                                 "Frequency": freqText.text,
                                 "Sentence Audio": "",
@@ -111,9 +117,11 @@ Window {
                 }
             }
 
-            Text {
+            TextEdit {
                 id: readingText
                 text: root.reading
+                readOnly: true
+                selectByMouse: true
                 width: parent.width
                 wrapMode: Text.Wrap
                 color: palette.windowText
@@ -176,7 +184,7 @@ Window {
                         Row {
                             spacing: 6
                             Text {
-                                text: modelData.source
+                                text: entryCard.entry.source
                                 color: palette.highlight
                                 font.pointSize: 8
                                 font.bold: true
@@ -193,37 +201,42 @@ Window {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        var url = bridge.get_audio(modelData.Kanji, modelData.Reading)
+                                        var url = bridge.get_audio(entryCard.entry.Kanji, entryCard.entry.Reading)
                                         if (url !== "") bridge.play_audio(url)
                                     }
                                 }
                             }
                         }
-                        Text {
-                            text: modelData.Kanji
+                        TextEdit {
+                            text: entryCard.entry.Kanji
+                            readOnly: true
+                            selectByMouse: true
                             color: palette.windowText
                             font.pointSize: 9
                             font.bold: true
                             font.family: "Noto Sans CJK JP"
-                            visible: index > 0
+                            visible: entryCard.index > 0
                         }
-                        Text {
-                            text: modelData.Reading
+                        TextEdit {
+                            text: entryCard.entry.Reading
+                            readOnly: true
+                            selectByMouse: true
                             color: palette.windowText
                             font.pointSize: 8
                             font.family: "Noto Sans CJK JP"
-                            visible: index > 0
+                            visible: entryCard.index > 0
                         }
+
                         Column {
                             width: parent.width
                             spacing: 9
 
                             Repeater {
-                                model: entry.Senses
+                                model: entryCard.entry.Senses
                                 Column {
                                     id: senseCol
-                                    property var sense: modelData
                                     required property var modelData
+                                    property var sense: modelData
                                     width: parent.width
                                     spacing: 3
 
@@ -250,9 +263,11 @@ Window {
                                             }
                                         }
 
-                                        Text {
-                                            width: glossRow.width - numBadge.width - glossRow.spacing
+                                        TextEdit {
+                                            width: glossRow.width - (numBadge ? numBadge.width : 0) - glossRow.spacing
                                             text: senseCol.sense.glosses
+                                            readOnly: true
+                                            selectByMouse: true
                                             wrapMode: Text.Wrap
                                             color: palette.windowText
                                             font.pointSize: 8
@@ -262,13 +277,13 @@ Window {
 
                                     Repeater {
                                         model: senseCol.sense.notes
-                                        Text {
+                                        TextEdit {
                                             required property var modelData
-                                            property real indent: 22
-                                            property real colWidth: senseCol.width
-                                            x: indent
-                                            width: colWidth - indent
+                                            x: 22
+                                            width: senseCol.width - 22
                                             text: "※ " + modelData
+                                            readOnly: true
+                                            selectByMouse: true
                                             wrapMode: Text.Wrap
                                             color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.55)
                                             font.pointSize: 7
@@ -278,13 +293,13 @@ Window {
 
                                     Repeater {
                                         model: senseCol.sense.refs
-                                        Text {
+                                        TextEdit {
                                             required property var modelData
-                                            property real indent: 22
-                                            property real colWidth: senseCol.width
-                                            x: indent
-                                            width: colWidth - indent
+                                            x: 22
+                                            width: senseCol.width - 22
                                             text: "→ " + modelData
+                                            readOnly: true
+                                            selectByMouse: true
                                             wrapMode: Text.Wrap
                                             color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.55)
                                             font.pointSize: 7
@@ -295,15 +310,17 @@ Window {
                             }
 
                             Row {
-                                visible: entry.Related && entry.Related.length > 0
+                                visible: entryCard.entry.Related && entryCard.entry.Related.length > 0
                                 spacing: 6
                                 Text {
                                     text: "related forms"
                                     color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.45)
                                     font.pointSize: 7
                                 }
-                                Text {
-                                    text: entry.Related ? entry.Related.join(" · ") : ""
+                                TextEdit {
+                                    text: entryCard.entry.Related ? entryCard.entry.Related.join(" · ") : ""
+                                    readOnly: true
+                                    selectByMouse: true
                                     color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.7)
                                     font.pointSize: 7
                                     font.family: "Noto Sans CJK JP"
