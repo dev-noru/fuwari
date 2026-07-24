@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
+import org.kde.layershell 1.0 as LayerShell
 
 pragma ComponentBehavior: Bound
 
@@ -13,12 +14,21 @@ Window {
     minimumWidth: 150
     visible: false
     color: palette.base
+    transientParent: null
     property var currentResults: []
     property string word: ""
     property string reading: ""
     property string pos: ""
     property string freq: ""
     property bool popupHovered: popupHover.hovered
+    property int posX: 0
+    property int posY: 0
+
+    LayerShell.Window.layer: LayerShell.Window.LayerOverlay
+    LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
+    LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
+    LayerShell.Window.margins: Qt.rect(root.posX, root.posY, 0, 0)
+    LayerShell.Window.exclusionZone: -1
 
     Flickable {
         anchors.fill: parent
@@ -228,16 +238,16 @@ Window {
                         }
 
                         Column {
+                            id: sensesCol
                             width: parent.width
                             spacing: 9
-
                             Repeater {
                                 model: entryCard.entry.Senses
                                 Column {
                                     id: senseCol
                                     required property var modelData
                                     property var sense: modelData
-                                    width: parent.width
+                                    width: sensesCol.width
                                     spacing: 3
 
                                     Row {

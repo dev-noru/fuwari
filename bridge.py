@@ -7,7 +7,7 @@ import base64
 import threading
 import json
 import sqlite3
-from PySide6.QtCore import QObject, Signal, Property, Slot
+from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer
 from dictionary import get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, parse_sense, DB_PATH
 from anki import ankiconnect_request
 from settings import settings, save_settings
@@ -16,6 +16,10 @@ from collections import deque
 import websockets
 from dictionary import cursor
 import re
+
+# Give up if the crate never answers (e.g. the overlay was killed).
+DRAG_TIMEOUT_MS = 30000
+
 
 POS_LABELS = {
     'v1': 'Ichidan verb',
@@ -69,6 +73,10 @@ class Bridge(QObject):
     historyChanged = Signal()
     dictionaryImported = Signal(bool)
     ocrLoadingChanged = Signal()
+    windowMoved = Signal(int, int)
+    windowDragCancelled = Signal()
+    screenSizeChanged = Signal()
+
 
     def __init__(self):
         super().__init__()
@@ -78,6 +86,22 @@ class Bridge(QObject):
         self._ocr = None
         self._layershell = None
         self._ocr_loading = False
+        self._screen_w = 0
+        self._screen_h = 0
+
+        self._drag_timer = QTimer(self)
+        self._drag_timer.setInterval(16)          # ~60Hz, matches the ghost redraw
+        self._drag_timer.timeout.connect(self._poll_drag)
+        self._drag_elapsed = 0
+
+        # _ls() is what spawns the Wayland thread, so the size is not available
+        # on the first call. Poll until the compositor has told it about an output.
+        self._screen_timer = QTimer(self)
+        self._screen_timer.setInterval(100)
+        self._screen_timer.timeout.connect(self._refresh_screen_size)
+        self._screen_attempts = 0
+        self._screen_timer.start()
+
         source = settings.get('text_source', 'clipboard')
         if source == 'clipboard':
             threading.Thread(target=self.clipboard_watcher, daemon=True).start()
@@ -87,6 +111,103 @@ class Bridge(QObject):
         elif source == 'lunatranslator':
             threading.Thread(target=self.websocket_watcher, daemon=True,
                 args=(settings.get('lunatranslator_ws_url', 'ws://localhost:2333/api/ws/text/origin'),)).start()
+
+
+    # --- window drag ---------------------------------------------------------
+    #
+    # Everything here is in compositor logical pixels. QML owns the conversion
+    # from Qt units, because only QML knows Screen.width; keeping the factor in
+    # one place is the difference between this working and drifting.
+
+    def _ls(self):
+        """The lazily created LayerShell instance, shared with OCR region select."""
+        if getattr(self, "_layershell", None) is None:
+            from layer_shell import LayerShell
+            self._layershell = LayerShell()
+        return self._layershell
+
+    def _refresh_screen_size(self):
+        self._screen_attempts += 1
+        try:
+            w, h = self._ls().screen_size()
+        except Exception as e:
+            print("screen_size failed:", e)
+            self._screen_timer.stop()
+            return
+        if w > 0 and h > 0:
+            self._screen_timer.stop()
+            if (w, h) != (self._screen_w, self._screen_h):
+                self._screen_w = w
+                self._screen_h = h
+                print(f"crate screen size: {w} x {h}")
+                self.screenSizeChanged.emit()
+        elif self._screen_attempts > 50:      # ~5s
+            print("crate never reported a screen size")
+            self._screen_timer.stop()
+
+    @Property(int, notify=screenSizeChanged)
+    def screenWidth(self):
+        return self._screen_w
+
+    @Property(int, notify=screenSizeChanged)
+    def screenHeight(self):
+        return self._screen_h
+
+    @Slot(str, int, int, int)
+    def set_drag_style(self, color, border, radius, fill_pct):
+        """color is a QML colour string, "#rrggbb" or "#aarrggbb"."""
+        text = color.lstrip("#")
+        if len(text) == 8:      # drop the alpha channel
+            text = text[2:]
+        try:
+            rgb = int(text, 16)
+        except ValueError:
+            rgb = 0xFFFFFF
+        try:
+            self._ls().set_drag_style(rgb, border, radius, fill_pct)
+        except Exception as e:
+            print("set_drag_style failed:", e)
+
+    @Slot(int, int, int, int, int, int)
+    def start_window_drag(self, x, y, w, h, grab_x, grab_y):
+        """Called from the toolbar's onPressed. Hands the window geometry to the
+        crate, which maps a stationary full-screen overlay and draws the ghost."""
+        try:
+            self._ls().start_drag(x, y, w, h, grab_x, grab_y)
+        except Exception as e:
+            print("start_window_drag failed:", e)
+            self.windowDragCancelled.emit()
+            return
+        self._drag_elapsed = 0
+        self._drag_timer.start()
+
+    def _poll_drag(self):
+        self._drag_elapsed += self._drag_timer.interval()
+        if self._drag_elapsed > DRAG_TIMEOUT_MS:
+            self._drag_timer.stop()
+            self._ls().stop_drag()
+            self.windowDragCancelled.emit()
+            return
+
+        result = self._ls().poll_drag()
+        if result is None:
+            return
+
+        self._drag_timer.stop()
+
+        if result == "cancel":
+            self.windowDragCancelled.emit()
+            return
+
+        try:
+            xs, ys = result.split(",")
+            self.windowMoved.emit(int(xs), int(ys))
+        except ValueError:
+            self.windowDragCancelled.emit()
+
+        
+
+    # -------------------------------------------------------------------------
 
     def process_clipboard(self, sentence):
         sentence = sentence.strip()
@@ -161,10 +282,8 @@ class Bridge(QObject):
             return
 
         def start_ocr():
-            if self._layershell is None:
-                from layer_shell import LayerShell
-                self._layershell = LayerShell()
-            region = self._layershell.select_region()
+            layershell = self._ls()
+            region = layershell.select_region()
             if not region:
                 return
             from ocr import OCRThread, is_pipeline_loaded, ensure_pipeline_loaded
@@ -172,7 +291,7 @@ class Bridge(QObject):
                 self._set_ocr_loading(True)
                 ensure_pipeline_loaded()
                 self._set_ocr_loading(False)
-            self._ocr = OCRThread(self.process_clipboard, self._layershell)
+            self._ocr = OCRThread(self.process_clipboard, layershell)
             self._ocr.set_region(region)
             self._ocr.start()
 
