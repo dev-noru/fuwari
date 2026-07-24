@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
+import org.kde.layershell 1.0 as LayerShell
 
 Window {
   id: mainWindow
@@ -12,6 +13,49 @@ Window {
   minimumWidth: 300
   visible: true
 
+  Component.onCompleted: console.log(
+    "screen:", Screen.width, "x", Screen.height,
+    "| avail:", Screen.desktopAvailableWidth, "x", Screen.desktopAvailableHeight,
+    "| crate:", bridge.screenWidth, "x", bridge.screenHeight,
+    "| win:", mainWindow.width, "x", mainWindow.height,
+    "| dpr:", Screen.devicePixelRatio)
+
+  property int posX: 0
+  property int posY: 0
+
+  // Compositor logical pixels per Qt logical pixel. Derived at runtime rather
+  // than hardcoded, so it holds for any display scaling. Falls back to 1 until
+  // the Wayland thread has reported an output.
+  property real dragScale: (bridge && bridge.screenWidth > 0 && Screen.width > 0)
+                           ? bridge.screenWidth / Screen.width
+                           : 1.0
+
+  // Margins are in compositor pixels, not Qt pixels, so every position in this
+  // file lives in compositor units and anything Qt-sized is multiplied by
+  // dragScale to get there.
+  property int screenW: (bridge && bridge.screenWidth > 0) ? bridge.screenWidth : Screen.width
+  property int screenH: (bridge && bridge.screenHeight > 0) ? bridge.screenHeight : Screen.height
+
+  // the window's size in compositor pixels
+  property int ghostW: Math.round(mainWindow.width * mainWindow.dragScale)
+  property int ghostH: Math.round(mainWindow.height * mainWindow.dragScale)
+
+  property bool dragging: false
+
+  // Ghost appearance, in Qt units; scaled on the way to the crate.
+  // Tune ghostRadius to match your compositor's corner rounding.
+  property int ghostBorder: 2
+  property int ghostRadius: 12
+  property int ghostFillPct: 14
+
+  LayerShell.Window.layer: LayerShell.Window.LayerOverlay
+  LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
+  LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
+  LayerShell.Window.margins: Qt.rect(mainWindow.posX, mainWindow.posY, 0, 0)
+  // Measure margins from the output edge rather than the usable area, so these
+  // coordinates share an origin with the crate's overlay.
+  LayerShell.Window.exclusionZone: -1
+
   property bool ocrActive: false
 
   Rectangle {
@@ -21,6 +65,52 @@ Window {
     height: gearIcon.height + 5
     color: Qt.rgba(palette.window.r, palette.window.g, palette.window.b, 0.9)
     z: 1
+
+    MouseArea {
+      id: dragArea
+      anchors.fill: parent
+      cursorShape: Qt.OpenHandCursor
+      // The compositor pins pointer focus to this surface until the button is
+      // released (implicit grab), so motion cannot be tracked here. Hand the
+      // drag to the crate, which owns a stationary full-screen overlay and
+      // therefore sees real screen coordinates.
+      onPressed: (mouse) => {
+        if (mainWindow.dragging) return
+        mainWindow.dragging = true
+        var s = mainWindow.dragScale
+        console.log("DRAG start | scale:", s,
+                    "| pos:", mainWindow.posX, mainWindow.posY,
+                    "| size:", mainWindow.width, mainWindow.height,
+                    "| crate:", bridge.screenWidth, bridge.screenHeight)
+        bridge.set_drag_style(palette.highlight.toString(),
+                              Math.max(1, Math.round(mainWindow.ghostBorder * s)),
+                              Math.round(mainWindow.ghostRadius * s),
+                              mainWindow.ghostFillPct)
+        bridge.start_window_drag(mainWindow.posX, mainWindow.posY,
+                                 mainWindow.ghostW, mainWindow.ghostH,
+                                 Math.round(mouse.x * s),
+                                 Math.round(mouse.y * s))
+      }
+    }
+
+    Text {
+      id: closeIcon
+      text: "✕"
+      font.pointSize: 11
+      color: closeMouse.containsMouse ? "#e06c75" : palette.windowText
+      anchors.top: parent.top
+      anchors.right: ocrIcon.left
+      anchors.margins: 5
+      z: 1
+
+      MouseArea {
+        id: closeMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: Qt.quit()
+        cursorShape: Qt.PointingHandCursor
+      }
+    }
 
     Text {
       id: gearIcon
@@ -124,6 +214,20 @@ Window {
     target: bridge
     function onWordsChanged() {
       sentenceEdit.hoverIndex = -1
+      sentenceEdit.pendingIndex = -1
+    }
+    // final position from the crate, in compositor pixels, applied once
+    function onWindowMoved(x, y) {
+      console.log("DRAG end | crate returned:", x, y)
+      var s = mainWindow.dragScale
+      var nx = Math.round(x / s)
+      var ny = Math.round(y / s)
+      mainWindow.posX = Math.max(0, Math.min(mainWindow.screenW - mainWindow.ghostW, x))
+      mainWindow.posY = Math.max(0, Math.min(mainWindow.screenH - mainWindow.ghostH, y))
+      mainWindow.dragging = false
+    }
+    function onWindowDragCancelled() {
+      mainWindow.dragging = false
     }
   }
 
@@ -133,11 +237,12 @@ Window {
   }
 
   Flickable {
+    id: sentenceFlick
     anchors.fill: parent
     contentHeight: sentenceArea.height
     clip: true
     ScrollBar.vertical: ScrollBar {
-      policy: sentenceArea.height > mainWindow.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+      policy: sentenceArea.height > sentenceFlick.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
       background: Rectangle { color: palette.base }
       contentItem: Rectangle {
         implicitWidth: 6
@@ -167,6 +272,8 @@ Window {
 
         property bool shiftHeld: false
         property int hoverIndex: -1
+        property real lastMx: -1
+        property real lastMy: -1
 
         selectionColor: {
           var light = palette.window.hsvValue >= 0.5
@@ -197,10 +304,16 @@ Window {
           onTriggered: {
             var sel = sentenceEdit.selectedText.trim()
             if (sel.length > 0) {
-              sentenceEdit.showLookup(sel)
+              sentenceEdit.showLookup(sel, sentenceEdit.selectionStart, sentenceEdit.selectionEnd)
             }
           }
         }
+        Timer {
+          id: transitTimer
+          interval: 120
+          onTriggered: sentenceEdit.resolveHover(sentenceEdit.lastMx, sentenceEdit.lastMy)
+        }
+        
 
         function esc(s) {
           return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -237,25 +350,48 @@ Window {
         function updateHover(mx, my, mods) {
           if (mods & Qt.ShiftModifier) return   // selecting: don't touch the text
           if (selectedText.length > 0) return
-          var p = charAt(mx, my)
-          var idx = tokenAt(p)
-          console.log("pos:", p, "-> token:", idx,
-                      idx >= 0 ? bridge.words[idx].surface + " [" + bridge.words[idx].start + "," + bridge.words[idx].end + ")" : "none")
+
+          var dx = mx - lastMx
+          var dy = my - lastMy
+          lastMx = mx
+          lastMy = my
+
+          // Heading toward the popup? Then tokens under the cursor are transit,
+          // not intent — leave the popup showing what is actually being read.
+          // The timer still resolves it if the cursor stops here.
+          if (definitionWindow.visible && Math.abs(dy) > Math.abs(dx)) {
+            var popupAbove = definitionWindow.posY < mainWindow.posY
+            if (popupAbove ? (dy < 0) : (dy > 0)) {
+              transitTimer.restart()
+              return
+            }
+          }
+
+          transitTimer.stop()
+          resolveHover(mx, my)
+        }
+
+        function resolveHover(mx, my) {
+          var idx = tokenAt(charAt(mx, my))
           if (idx === hoverIndex) return
           hoverIndex = idx
           if (idx < 0) {
             hideTimer.restart()
             return
           }
-          showLookup(bridge.words[idx].lemma)
+          var tok = bridge.words[idx]
+          showLookup(tok.lemma, tok.start, tok.end)
         }
 
         function leave() {
+          transitTimer.stop()
+          lastMx = -1
+          lastMy = -1
           hoverIndex = -1
           if (definitionWindow.visible) hideTimer.restart()
         }
 
-        function showLookup(term) {
+        function showLookup(term, start, end) {
           var res = bridge.lookup(term)
           if (res === "") {
             hideTimer.restart()
@@ -268,6 +404,28 @@ Window {
           definitionWindow.pos = first["Part of Speech"].join(", ")
           definitionWindow.freq = first.Frequency ? "JPDB: " + first.Frequency : ""
           definitionWindow.currentResults = results
+
+          if (start >= 0) {
+            var r = positionToRectangle(start)
+            // scene coords handle the Flickable offset and nesting for us
+            var p = mapToItem(null, r.x, r.y + r.height)
+            var ds = mainWindow.dragScale
+            var defW = Math.round(definitionWindow.width * ds)
+            var defH = Math.round(definitionWindow.height * ds)
+            var sx = mainWindow.posX + Math.round(p.x * ds)
+            var sy = mainWindow.posY - defH - 4
+            if (sy < 0) {
+              sy = mainWindow.posY + mainWindow.ghostH + 4
+              if (sy + defH > mainWindow.screenH)
+                sy = Math.max(0, mainWindow.screenH - defH - 8)
+            }
+            if (sy + defH > mainWindow.screenH)
+              sy = mainWindow.posY - defH - 4
+            definitionWindow.posX = sx
+            definitionWindow.posY = sy
+          
+          }
+
           hideTimer.stop()
           definitionWindow.visible = true
         }
@@ -278,14 +436,14 @@ Window {
   Rectangle {
     anchors.fill: parent
     z: 1000
-    visible: bridge.ocrLoading
+    visible: bridge && bridge.ocrLoading
     color: Qt.rgba(palette.window.r, palette.window.g, palette.window.b, 0.85)
 
     Column {
       anchors.centerIn: parent
       spacing: 12
       BusyIndicator {
-        running: bridge.ocrLoading
+        running: bridge && bridge.ocrLoading
         anchors.horizontalCenter: parent.horizontalCenter
       }
       Text {

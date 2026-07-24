@@ -8,7 +8,7 @@ use std::time::Duration;
 
 fn main() {
     // Spawns the Wayland thread; hands back the command sender + event receiver.
-    let (cmd_tx, evt_rx) = event_loop::start();
+    let (cmd_tx, evt_rx, _screen) = event_loop::start();
 
     // Let the thread bind globals before we drive it.
     std::thread::sleep(Duration::from_millis(150));
