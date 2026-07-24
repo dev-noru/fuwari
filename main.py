@@ -33,5 +33,6 @@ engine = QQmlApplicationEngine()
 engine.rootContext().setContextProperty("bridge", bridge)
 script_dir = os.path.dirname(os.path.abspath(__file__))
 engine.load(os.path.join(script_dir, 'main.qml'))
+bridge.set_window(engine.rootObjects()[0])
 
 sys.exit(app.exec())

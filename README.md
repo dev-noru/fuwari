@@ -123,6 +123,8 @@ above others, which makes building a popup dictionary more challenging than on X
 Fuwari works around this using Qt window flags and compositor window rules to stay
 on top of fullscreen applications.
 
+X11: Fuwari is built for Wayland and uses wlr-layer-shell for window positioning. It runs under X11, but window dragging is handled by your WM rather than by Fuwari, and there's no drag preview.
+
 ## Credits
 - [rampaa/JL](https://github.com/rampaa/JL) — Inspiration
 - [polm/fugashi](https://github.com/polm/fugashi) — MeCab Python wrapper
