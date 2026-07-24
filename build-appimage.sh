@@ -6,7 +6,7 @@ APPDIR=Fuwari.AppDir
 SRC="$(pwd)"
 PYVER=3.11
 UNIDIC_CACHE="$HOME/.cache/fuwari-unidic"
-BUNDLE_LAYERSHELL=false   # set false once you confirm QML doesn't use LayerShell
+BUNDLE_LAYERSHELL=true  # set false once you confirm QML doesn't use LayerShell
 
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt  # manylinux py needs this for TLS
 
@@ -59,21 +59,34 @@ cp "$SRC/fuwari-layer-shell/target/release/libfuwari_layer_shell.so" \
 # ── 5. wl-paste (clipboard texthook; SteamOS may not ship wl-clipboard) ──
 cp "$(command -v wl-paste)" "$APPDIR/usr/bin/" 2>/dev/null || echo "WARN: wl-paste not bundled"
 
-# ── 6. KDE LayerShell QML module (REMOVE if QML only imports, never uses it) ──
+# ── 6. KDE LayerShell (QML module + Wayland shell integration plugin) ──
 if [ "$BUNDLE_LAYERSHELL" = true ] && [ -d /usr/lib/qt6/qml/org/kde/layershell ]; then
   echo "Bundling KDE LayerShell..."
   KDE_QML="$("$PYBIN" -c 'import PySide6,os;print(os.path.join(os.path.dirname(PySide6.__file__),"Qt","qml","org","kde"))')"
   QT_LIB="$("$PYBIN" -c 'import PySide6,os;print(os.path.join(os.path.dirname(PySide6.__file__),"Qt","lib"))')"
+  QT_PLUGINS="$("$PYBIN" -c 'import PySide6,os;print(os.path.join(os.path.dirname(PySide6.__file__),"Qt","plugins"))')"
+
+  # the QML module itself
   mkdir -p "$KDE_QML" "$APPDIR/usr/lib"
   cp -r /usr/lib/qt6/qml/org/kde/layershell "$KDE_QML/"
   PLUGIN_SO="$(find "$KDE_QML/layershell" -name '*.so' | head -1)"
   [ -n "$PLUGIN_SO" ] || { echo "ERROR: layershell .so not found after copy"; exit 1; }
-  # bundle its non-system, non-Qt-already-present deps
-  ldd "$PLUGIN_SO" | awk '/=> \//{print $3}' | while read -r lib; do
-    name="$(basename "$lib")"
-    [ -f "$QT_LIB/$name" ] && continue                       # already in PySide6's Qt
-    case "$name" in libc.so*|libm.so*|libstdc++.so*|libgcc_s.so*|libdl.so*|libpthread.so*|librt.so*|libresolv.so*|libnss_*) continue;; esac
-    cp "$lib" "$APPDIR/usr/lib/"
+
+  # the shell-integration plugin LayerShellQt selects at runtime; without it
+  # the import resolves but the surface is never created
+  SHELL_SO=/usr/lib/qt6/plugins/wayland-shell-integration/liblayer-shell.so
+  [ -f "$SHELL_SO" ] || { echo "ERROR: $SHELL_SO missing"; exit 1; }
+  mkdir -p "$QT_PLUGINS/wayland-shell-integration"
+  cp "$SHELL_SO" "$QT_PLUGINS/wayland-shell-integration/"
+
+  # bundle both plugins' non-system, non-Qt-already-present deps
+  for so in "$PLUGIN_SO" "$QT_PLUGINS/wayland-shell-integration/liblayer-shell.so"; do
+    ldd "$so" | awk '/=> \//{print $3}' | while read -r lib; do
+      name="$(basename "$lib")"
+      [ -f "$QT_LIB/$name" ] && continue                       # already in PySide6's Qt
+      case "$name" in libc.so*|libm.so*|libstdc++.so*|libgcc_s.so*|libdl.so*|libpthread.so*|librt.so*|libresolv.so*|libnss_*) continue;; esac
+      cp "$lib" "$APPDIR/usr/lib/"
+    done
   done
 fi
 
