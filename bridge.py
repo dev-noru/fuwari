@@ -16,6 +16,7 @@ from collections import deque
 import websockets
 from dictionary import cursor
 import re
+from PySide6.QtGui import QGuiApplication, QCursor
 
 # Give up if the crate never answers (e.g. the overlay was killed).
 DRAG_TIMEOUT_MS = 30000
@@ -119,6 +120,16 @@ class Bridge(QObject):
     # from Qt units, because only QML knows Screen.width; keeping the factor in
     # one place is the difference between this working and drifting.
 
+    def set_window(self, win):
+        self._window = win
+
+    @Slot()
+    def nudge(self):
+        """Layer-shell margins are double-buffered and only take effect on the
+        next wl_surface.commit, which Qt only sends when it renders a frame."""
+        if getattr(self, "_window", None) is not None:
+            self._window.requestUpdate()
+
     def _ls(self):
         """The lazily created LayerShell instance, shared with OCR region select."""
         if getattr(self, "_layershell", None) is None:
@@ -127,6 +138,9 @@ class Bridge(QObject):
         return self._layershell
 
     def _refresh_screen_size(self):
+        if not self.isWayland:
+            self._screen_timer.stop()
+            return
         self._screen_attempts += 1
         try:
             w, h = self._ls().screen_size()
@@ -152,6 +166,15 @@ class Bridge(QObject):
     @Property(int, notify=screenSizeChanged)
     def screenHeight(self):
         return self._screen_h
+
+    @Property(bool, constant=True)
+    def isWayland(self):
+        return QGuiApplication.platformName().startswith("wayland")
+
+    @Slot(result="QVariantList")
+    def cursor_pos(self):
+        p = QCursor.pos()
+        return [p.x(), p.y()]
 
     @Slot(str, int, int, int)
     def set_drag_style(self, color, border, radius, fill_pct):

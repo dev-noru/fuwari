@@ -22,6 +22,10 @@ Window {
 
   property int posX: 0
   property int posY: 0
+  // On Wayland we own the position, so posX/posY are authoritative. On X11 the
+  // WM can move us without telling QML, so ask Qt where we actually ended up.
+  readonly property int winX: mainWindow.wayland ? mainWindow.posX : mainWindow.x
+  readonly property int winY: mainWindow.wayland ? mainWindow.posY : mainWindow.y
 
   // Compositor logical pixels per Qt logical pixel. Derived at runtime rather
   // than hardcoded, so it holds for any display scaling. Falls back to 1 until
@@ -41,6 +45,10 @@ Window {
   property int ghostH: Math.round(mainWindow.height * mainWindow.dragScale)
 
   property bool dragging: false
+  property bool wayland: bridge ? bridge.isWayland : true
+
+  x: mainWindow.posX
+  y: mainWindow.posY
 
   // Ghost appearance, in Qt units; scaled on the way to the crate.
   // Tune ghostRadius to match your compositor's corner rounding.
@@ -225,6 +233,7 @@ Window {
       mainWindow.posX = Math.max(0, Math.min(mainWindow.screenW - mainWindow.ghostW, x))
       mainWindow.posY = Math.max(0, Math.min(mainWindow.screenH - mainWindow.ghostH, y))
       mainWindow.dragging = false
+      bridge.nudge()
     }
     function onWindowDragCancelled() {
       mainWindow.dragging = false
@@ -360,7 +369,7 @@ Window {
           // not intent — leave the popup showing what is actually being read.
           // The timer still resolves it if the cursor stops here.
           if (definitionWindow.visible && Math.abs(dy) > Math.abs(dx)) {
-            var popupAbove = definitionWindow.posY < mainWindow.posY
+            var popupAbove = definitionWindow.posY < mainWindow.winY
             if (popupAbove ? (dy < 0) : (dy > 0)) {
               transitTimer.restart()
               return
@@ -409,18 +418,26 @@ Window {
             var r = positionToRectangle(start)
             // scene coords handle the Flickable offset and nesting for us
             var p = mapToItem(null, r.x, r.y + r.height)
+            console.log("POPUP | win:", mainWindow.posX, mainWindow.posY,
+                        "| p.x:", p.x,
+                        "| defW/H:", definitionWindow.width, definitionWindow.height,
+                        "| screenW/H:", mainWindow.screenW, mainWindow.screenH,
+                        "| scale:", mainWindow.dragScale)
             var ds = mainWindow.dragScale
             var defW = Math.round(definitionWindow.width * ds)
             var defH = Math.round(definitionWindow.height * ds)
-            var sx = mainWindow.posX + Math.round(p.x * ds)
-            var sy = mainWindow.posY - defH - 4
+            var sx = mainWindow.winX + Math.round(p.x * ds)
+            if (sx + defW > mainWindow.screenW)
+              sx = mainWindow.screenW - defW - 8
+            if (sx < 0)
+              sx = 0
+            // prefer above the window; fall below only when there is no room
+            var sy = mainWindow.winY - defH - 4
             if (sy < 0) {
-              sy = mainWindow.posY + mainWindow.ghostH + 4
+              sy = mainWindow.winY + mainWindow.ghostH + 4
               if (sy + defH > mainWindow.screenH)
                 sy = Math.max(0, mainWindow.screenH - defH - 8)
             }
-            if (sy + defH > mainWindow.screenH)
-              sy = mainWindow.posY - defH - 4
             definitionWindow.posX = sx
             definitionWindow.posY = sy
           

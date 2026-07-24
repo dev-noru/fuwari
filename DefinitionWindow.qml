@@ -30,6 +30,9 @@ Window {
     LayerShell.Window.margins: Qt.rect(root.posX, root.posY, 0, 0)
     LayerShell.Window.exclusionZone: -1
 
+    x: root.posX
+    y: root.posY
+
     Flickable {
         anchors.fill: parent
         contentHeight: contentCol.implicitHeight
