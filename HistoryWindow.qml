@@ -1,17 +1,46 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
+import org.kde.layershell 1.0 as LayerShell
 
 Window {
     flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint | Qt.WindowDoesNotAcceptFocus
     id: root
     width: 400
-    height: 200 
+    height: 200
     minimumHeight: 150
     minimumWidth: 150
     visible: false
     color: palette.base
     property var historyData: []
+    property int posX: 0
+    property int posY: 0
+
+    LayerShell.Window.layer: LayerShell.Window.LayerOverlay
+    LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
+    LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
+    LayerShell.Window.margins: Qt.rect(root.posX, root.posY, 0, 0)
+    LayerShell.Window.exclusionZone: -1
+
+    x: root.posX
+    y: root.posY
+
+    SystemPalette { id: palette; colorGroup: SystemPalette.Active }
+
+    // Opens under the main window. Positions are compositor pixels, same as
+    // everywhere else that sets margins.
+    function placeNear() {
+        var ds = mainWindow.dragScale
+        var w = Math.round(root.width * ds)
+        var h = Math.round(root.height * ds)
+        var px = mainWindow.winX
+        var py = mainWindow.winY + mainWindow.ghostH + 8
+        if (px + w > mainWindow.screenW) px = mainWindow.screenW - w - 8
+        if (px < 0) px = 0
+        if (py + h > mainWindow.screenH) py = Math.max(0, mainWindow.winY - h - 8)
+        root.posX = px
+        root.posY = py
+    }
 
     Connections {
       target: bridge
@@ -19,11 +48,14 @@ Window {
         historyData = JSON.parse(bridge.get_history())
       }
     }
+
     onVisibleChanged: {
         if (visible) {
             historyData = JSON.parse(bridge.get_history())
+            placeNear()
         }
     }
+
     Flickable {
     anchors.fill: parent
     contentHeight: contentCol.implicitHeight
@@ -33,7 +65,7 @@ Window {
         policy: contentCol.implicitHeight > root.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
         background: Rectangle { color: palette.base }
         contentItem: Rectangle {
-            width: parent.width 
+            implicitWidth: 6
             color: palette.light
             radius: 3
         }
@@ -76,6 +108,7 @@ Window {
                   Repeater {
                       model: modelData.words
                       Rectangle {
+                          id: wordChip
                           width: wordText.width + 6
                           height: wordText.height + 4
                           color: "transparent"
@@ -85,40 +118,38 @@ Window {
                           MouseArea {
                             anchors.fill: parent
                             hoverEnabled: true
-                            onExited: {
-
-                              parent.color = "transparent"
-                            }
+                            onExited: wordChip.color = "transparent"
                             onEntered: {
-                              currentDefinition = bridge.lookup(modelData.lemma)
-                              parent.color = Qt.rgba(palette.highlight.r, palette.highlight.g, palette.highlight.b, 0.2)
-                              if (currentDefinition === "") {
-                                  return
-                                  }
-                            var results = JSON.parse(currentDefinition)
-                            var first = results[0]
+                              wordChip.color = Qt.rgba(palette.highlight.r, palette.highlight.g, palette.highlight.b, 0.2)
 
-                            var pos = parent.mapToGlobal(mouseX, mouseY)
+                              var res = bridge.lookup(modelData.lemma)
+                              if (res === "") return
+                              var results = JSON.parse(res)
+                              var first = results[0]
 
-                            var popupX = pos.x
-                            var popupY = pos.y + 20
+                              definitionWindow.word = first.Kanji
+                              definitionWindow.reading = first.Reading
+                              definitionWindow.pos = first["Part of Speech"].join(", ")
+                              definitionWindow.freq = first.Frequency ? "JPDB: " + first.Frequency : ""
+                              definitionWindow.currentResults = results
 
-                            if (popupX + definitionWindow.width > Screen.width)
-                            popupX = pos.x - definitionWindow.width
+                              // scene coords inside this window, then offset by
+                              // where the window itself sits
+                              var ds = mainWindow.dragScale
+                              var defW = Math.round(definitionWindow.width * ds)
+                              var defH = Math.round(definitionWindow.height * ds)
+                              var p = wordChip.mapToItem(null, 0, wordChip.height)
+                              var px = root.posX + Math.round(p.x * ds)
+                              var py = root.posY + Math.round(p.y * ds) + 4
+                              if (px + defW > mainWindow.screenW)
+                                px = mainWindow.screenW - defW - 8
+                              if (px < 0) px = 0
+                              if (py + defH > mainWindow.screenH)
+                                py = Math.max(0, root.posY + Math.round(p.y * ds) - wordChip.height - defH - 4)
 
-                            if (popupY + definitionWindow.height > Screen.height)
-                            popupY = pos.y - definitionWindow.height
-
-                            definitionWindow.word = first.Kanji
-                            definitionWindow.reading = first.Reading
-                            definitionWindow.pos = first["Part of Speech"].join(", ")
-                            definitionWindow.freq = first.Frequency ? "JPDB: " + first.Frequency : ""
-                            definitionWindow.currentResults = results
-                            Qt.callLater(function() {
-                                definitionWindow.x = popupX
-                                definitionWindow.y = popupY
-                                definitionWindow.visible = true
-                            })
+                              definitionWindow.posX = px
+                              definitionWindow.posY = py
+                              definitionWindow.visible = true
                             }
                           }
                           Text {
@@ -134,7 +165,7 @@ Window {
               }
 
           }
-        } 
+        }
       }
     }
   }
