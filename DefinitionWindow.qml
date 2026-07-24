@@ -33,6 +33,8 @@ Window {
     x: root.posX
     y: root.posY
 
+    SystemPalette { id: palette; colorGroup: SystemPalette.Active }
+
     Flickable {
         anchors.fill: parent
         contentHeight: contentCol.implicitHeight
