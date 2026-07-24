@@ -1,7 +1,9 @@
 import os
+import sys
 import sqlite3
 
 DB_PATH = os.path.expanduser('~/.local/share/fuwari/fuwari.db')
+
 
 def old_schema_exists():
     if not os.path.exists(DB_PATH):
@@ -14,13 +16,12 @@ def old_schema_exists():
     conn.close()
     return result is not None
 
+
 if not os.path.exists(DB_PATH) or old_schema_exists():
     from migrate import main as migrate
     migrate()
 
-from dictionary import DB_PATH
 from bridge import Bridge
-import sys
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
@@ -31,8 +32,15 @@ bridge = Bridge()
 
 engine = QQmlApplicationEngine()
 engine.rootContext().setContextProperty("bridge", bridge)
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 engine.load(os.path.join(script_dir, 'main.qml'))
+
+if not engine.rootObjects():
+    sys.exit("Failed to load main.qml — see the QML errors above")
+
+# The window is needed to force a wl_surface commit after moving: layer-shell
+# margins are double-buffered and do not apply until the next frame.
 bridge.set_window(engine.rootObjects()[0])
 
 sys.exit(app.exec())
