@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 import sqlite3
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer
-from dictionary import get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, parse_sense, DB_PATH
+from dictionary import lookup_best, get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, parse_sense, DB_PATH
 from anki import ankiconnect_request
 from settings import settings, save_settings
 from migrate import import_dictionary
@@ -875,12 +875,35 @@ class Bridge(QObject):
 
     @Slot(str, result=str)
     def lookup(self, word):
+        return self._lookup_entries(None, word)
+
+    @Slot(int, result=str)
+    def lookup_token(self, index):
+        """Look up a token by position, so its part of speech and reading can
+        pick between entries that share a spelling.
+
+        Indexes the snapshot taken when the scan ran, not self._words: the
+        clipboard watcher rewrites that continuously, so by the time a hover
+        arrives the index would refer to a different sentence.
+        """
+        words = self._ocr_words or self._words
+        if not (0 <= index < len(words)):
+            return ""
+        w = words[index]
+        cands = w.get('candidates') or [w['lemma']]
+        entries = lookup_best(cands, w.get('reading', ''), w.get('pos', ''))
+        print(f"  lookup_token[{index}] {w['surface']} pos={w.get('pos','?')} "
+              f"cands={cands} -> {entries[0]['term'] if entries else 'none'}")
+        return self._lookup_entries(entries or None, w['lemma'])
+
+    def _lookup_entries(self, entries, word):
         print(word)
         try:
             word = word.split('-')[0]
             hiragana = katakana_to_hiragana(word)
             results = []
-            entries = dictionary(word) or dictionary(hiragana)
+            if entries is None:
+                entries = dictionary(word) or dictionary(hiragana)
             if entries:
                 # group rows by (title, term, reading), preserving first-seen order
                 groups = {}

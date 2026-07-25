@@ -1,6 +1,6 @@
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, Region},
-    shm::{Shm, ShmHandler, slot::SlotPool},
+    shm::{Shm, ShmHandler, slot::{Buffer, SlotPool}},
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -35,10 +35,17 @@ pub struct OverlayState {
     layer_surface: Option<LayerSurface>,
     first_configure: bool,
     pool: Option<SlotPool>,
+    /// Reused across draws. SlotPool::create_buffer takes a fresh slot every
+    /// call and doubles the pool whenever one will not fit, and it never
+    /// shrinks -- so allocating per draw grows without bound once drawing
+    /// happens on every hover rather than only when the text changes.
+    buffer: Option<Buffer>,
+    buffer_dims: (u32, u32),
     // Region select surface
     select_surface: Option<LayerSurface>,
     first_select_configure: bool,
     select_pool: Option<SlotPool>,
+    select_buffer: Option<Buffer>,
     region_select: bool,
     drag_start: Option<(f64, f64)>,
     drag_current: (f64, f64),
@@ -51,6 +58,7 @@ pub struct OverlayState {
     drag_surface: Option<LayerSurface>,
     first_drag_configure: bool,
     drag_pool: Option<SlotPool>,
+    drag_buffer: Option<Buffer>,
     drag_active: bool,
     /// set once the user has committed or cancelled; the ghost freezes and we
     /// wait for the button release before unmapping, so the release cannot leak
@@ -458,13 +466,25 @@ impl OverlayState {
         let height = self.height;
         let stride = width as i32 * 4;
 
+        // Taken out so `self` is not borrowed while the pool is in use.
+        let reusable = if self.buffer_dims == (width, height) { self.buffer.take() } else { None };
+
         let pool = self.pool.get_or_insert_with(|| {
             SlotPool::new(width as usize * height as usize * 4, &self.shm).expect("failed to create pool")
         });
 
-        let (buffer, canvas) = pool
-            .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Argb8888)
-            .expect("failed to create buffer");
+        // Reuse the previous buffer whenever the compositor has released it;
+        // only take a new slot when it is still on screen.
+        let buffer = match reusable {
+            Some(b) if pool.canvas(&b).is_some() => b,
+            _ => {
+                let (b, _) = pool
+                    .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Argb8888)
+                    .expect("failed to create buffer");
+                b
+            }
+        };
+        let canvas = pool.canvas(&buffer).expect("buffer canvas");
 
         // The overlay is invisible at rest. Only the hovered token is ever
         // painted, and these outlines are an opt-in development aid; filling
@@ -573,16 +593,25 @@ impl OverlayState {
         let height = self.height;
         let stride = width as i32 * 4;
 
+        let reusable_select = self.select_buffer.take();
         let select_pool = self.select_pool.get_or_insert_with(|| {
             SlotPool::new(width as usize * height as usize * 4 * 2, &self.shm)
                 .expect("failed to create select pool")
         });
 
-        let (buffer, canvas) = match select_pool
-            .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Argb8888)
-        {
-            Ok(r) => r,
-            Err(_) => return, // slot still held; the frame loop will retry next frame
+        // Reuse one buffer; see the note on OverlayState::buffer.
+        let buffer = match reusable_select {
+            Some(b) if select_pool.canvas(&b).is_some() => b,
+            _ => match select_pool
+                .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Argb8888)
+            {
+                Ok((b, _)) => b,
+                Err(_) => return, // slot still held; the frame loop retries
+            },
+        };
+        let canvas = match select_pool.canvas(&buffer) {
+            Some(c) => c,
+            None => return,
         };
 
         // Dark semi-transparent overlay over the whole screen
@@ -668,6 +697,7 @@ impl OverlayState {
             buffer.attach_to(wl).expect("buffer attach");
             wl.commit();
         }
+        self.select_buffer = Some(buffer);
     }
 
     // --- Window drag surface methods ---
@@ -767,16 +797,26 @@ impl OverlayState {
         // a radius larger than half the shorter side would invert the corners
         let radius = self.drag_radius.clamp(0.0, gw.min(gh) as f32 / 2.0);
 
+        let reusable_drag = self.drag_buffer.take();
         let drag_pool = self.drag_pool.get_or_insert_with(|| {
             SlotPool::new(width as usize * height as usize * 4 * 2, &self.shm)
                 .expect("failed to create drag pool")
         });
 
-        let (buffer, canvas) = match drag_pool
-            .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Argb8888)
-        {
-            Ok(r) => r,
-            Err(_) => return, // slot still held; retry on the next frame
+        // Reuse one buffer; this redraws on every pointer motion, so taking a
+        // fresh slot each time grows the pool fastest of all three surfaces.
+        let buffer = match reusable_drag {
+            Some(b) if drag_pool.canvas(&b).is_some() => b,
+            _ => match drag_pool
+                .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Argb8888)
+            {
+                Ok((b, _)) => b,
+                Err(_) => return, // slot still held; retry on the next frame
+            },
+        };
+        let canvas = match drag_pool.canvas(&buffer) {
+            Some(c) => c,
+            None => return,
         };
 
         // Fully transparent base. Unlike region select we do not dim the
@@ -842,6 +882,7 @@ impl OverlayState {
             buffer.attach_to(wl).expect("buffer attach");
             wl.commit();
         }
+        self.drag_buffer = Some(buffer);
     }
 }
 
@@ -866,15 +907,19 @@ pub fn new(
         layer_surface: None,
         first_configure: true,
         pool: None,
+        buffer: None,
+        buffer_dims: (0, 0),
         select_surface: None,
         first_select_configure: true,
         select_pool: None,
+        select_buffer: None,
         region_select: false,
         drag_start: None,
         drag_current: (0.0, 0.0),
         drag_surface: None,
         first_drag_configure: true,
         drag_pool: None,
+        drag_buffer: None,
         drag_active: false,
         drag_done: false,
         drag_size: (0, 0),

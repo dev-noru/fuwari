@@ -21,7 +21,6 @@ pub struct FuwariHandle {
     pending_drag: Option<CString>,
     screen: Arc<event_loop::ScreenSize>,
     // Capture: Grim instance reused across calls; buffer kept alive for the FFI return.
-    grim: Option<grim_rs::Grim>,
     pending_capture: Option<Vec<u8>>,
 }
 
@@ -102,7 +101,6 @@ pub extern "C" fn fuwari_start() -> *mut FuwariHandle {
         pending_region: None,
         pending_drag: None,
         screen,
-        grim: None,
         pending_capture: None,
     });
 
@@ -131,14 +129,20 @@ pub extern "C" fn fuwari_capture(
         let handle = &mut *ptr;
         handle.pending_capture = None; // release the previous buffer
 
-        // Lazily create the Grim instance, then reuse it for every capture.
-        if handle.grim.is_none() {
-            match grim_rs::Grim::new() {
-                Ok(g) => handle.grim = Some(g),
-                Err(_) => return std::ptr::null(),
-            }
-        }
-        let grim = handle.grim.as_mut().unwrap();
+        // A fresh Grim per capture, deliberately.
+        //
+        // grim-rs 0.2.0 creates a wl_shm_pool and a wl_buffer for every
+        // capture and destroys neither, so a reused instance grows this
+        // process and the compositor by a full-screen buffer each time --
+        // about 21MB per call at 1440p, on both sides. Grim owns its Wayland
+        // connection, and dropping it makes the compositor release everything
+        // that connection allocated, which is the only handle on the leak
+        // from outside the crate. The cost is one connect and roundtrip per
+        // capture, which is immaterial next to OCR at two captures a second.
+        let mut grim = match grim_rs::Grim::new() {
+            Ok(g) => g,
+            Err(_) => return std::ptr::null(),
+        };
 
         let region = grim_rs::Region::new(x, y, width, height);
         let result = match grim.capture_region(region) {

@@ -89,11 +89,48 @@ _pipeline = None
 _pipeline_lock = threading.Lock()
 
 
+def _disable_onnx_arena() -> None:
+    """Stop ONNX Runtime's CPU memory arena growing without bound.
+
+    The arena is on by default and never returns memory to the OS, so a scan
+    every SCAN_INTERVAL grows resident memory for as long as the app runs --
+    gigabytes over a few hours. It is a property of the session, which the OCR
+    engine creates internally, so the option is injected by wrapping the
+    constructor rather than by patching the engine.
+
+    Costs a little latency per inference, since allocation is no longer served
+    from a pre-grown pool.
+    """
+    try:
+        import onnxruntime
+    except ImportError:
+        return
+    if getattr(onnxruntime.InferenceSession, '_fuwari_no_arena', False):
+        return
+
+    original = onnxruntime.InferenceSession.__init__
+
+    def patched(self, *args, **kwargs):
+        opts = kwargs.get('sess_options')
+        if opts is None and len(args) > 1 and isinstance(args[1], onnxruntime.SessionOptions):
+            opts = args[1]
+        if opts is None:
+            opts = onnxruntime.SessionOptions()
+            kwargs['sess_options'] = opts
+        opts.enable_cpu_mem_arena = False
+        opts.enable_mem_pattern = False
+        return original(self, *args, **kwargs)
+
+    onnxruntime.InferenceSession.__init__ = patched
+    onnxruntime.InferenceSession._fuwari_no_arena = True
+
+
 def _get_pipeline() -> OCRPipeline:
     global _pipeline
     if _pipeline is None:
         with _pipeline_lock:
             if _pipeline is None:
+                _disable_onnx_arena()
                 _pipeline = MeikiPipeline()
     return _pipeline
 
@@ -118,7 +155,6 @@ class OCRThread:
         self._last_fired = ""
         self._last_regions = []
         self._last_chars = []
-        self._last_frame = None
 
     def start(self):
         self._pipeline = _get_pipeline()
@@ -207,9 +243,6 @@ class OCRThread:
                 last_text = text
                 if stable_count == 2 and text != self._last_fired:
                     self._last_fired = text
-                    # Frame is retained only once the text has settled, so the
-                    # pixels behind the boxes match the boxes themselves.
-                    self._last_frame = img
                     self._callback(text)
                     if self._on_geometry:
                         self._on_geometry(chars, self._capture_origin,
