@@ -37,8 +37,13 @@ Window {
     // Clamping has to reserve room for the expanded capsule, or dragging the
     // dot to the right edge would open the exit off screen.
     readonly property int expandedWidth: 150
-    width: expanded ? expandedWidth : 22
-    height: 26
+    // The window is sized for the ping, which QML clips to the window bounds.
+    // The visible capsule is drawn smaller inside it, so the pill stays slim
+    // while the ring still has room to expand -- the two used to be the same
+    // rectangle, which forced a fat pill to get a large ring.
+    readonly property int capsuleHeight: 28
+    width: expanded ? expandedWidth : 52
+    height: 52
 
     LayerShell.Window.layer: LayerShell.Window.LayerOverlay
     LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
@@ -63,12 +68,16 @@ Window {
 
     Timer {
         id: introTimer
-        interval: 2600
+        interval: 5000
         onTriggered: root.introducing = false
     }
 
     Rectangle {
-        anchors.fill: parent
+        // The pill. Deliberately not filling the window; see capsuleHeight.
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        height: root.capsuleHeight
         radius: height / 2
         color: palette.window
         border.color: palette.highlight
@@ -77,28 +86,52 @@ Window {
         Behavior on opacity { NumberAnimation { duration: 130 } }
     }
 
+    // Expanding ring, like a sonar ping. Motion outwards from a fixed point
+    // catches peripheral vision far better than a dot changing size, which is
+    // what makes it findable without having to be permanently bright.
     Rectangle {
-        id: dot
-        width: 12
-        height: 12
+        id: ping
+        anchors.centerIn: dot
+        width: dot.width
+        height: dot.height
         radius: width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: 5
-        anchors.verticalCenter: parent.verticalCenter
-        color: palette.highlight
-        // Dim at rest so it reads as a marker rather than a control.
-        opacity: root.expanded ? 1.0 : (root.introducing ? 1.0 : 0.45)
-        Behavior on opacity { NumberAnimation { duration: 500 } }
+        color: "transparent"
+        border.color: palette.highlight
+        border.width: 2
+        visible: root.introducing
+        opacity: 0
 
-        // A slow pulse while introducing, so the eye catches it even at the
-        // edge of vision.
-        SequentialAnimation on scale {
+        SequentialAnimation {
             running: root.introducing
             loops: Animation.Infinite
-            NumberAnimation { to: 1.45; duration: 650; easing.type: Easing.InOutQuad }
-            NumberAnimation { to: 1.0;  duration: 650; easing.type: Easing.InOutQuad }
+            ParallelAnimation {
+                NumberAnimation { target: ping; property: "width";   from: dot.width;  to: dot.width * 3.2;  duration: 1100; easing.type: Easing.OutQuad }
+                NumberAnimation { target: ping; property: "height";  from: dot.height; to: dot.height * 3.2; duration: 1100; easing.type: Easing.OutQuad }
+                NumberAnimation { target: ping; property: "opacity"; from: 0.85;       to: 0.0;              duration: 1100; easing.type: Easing.OutQuad }
+            }
+            PauseAnimation { duration: 250 }
         }
-        onScaleChanged: if (!root.introducing && scale !== 1.0) scale = 1.0
+    }
+
+    Rectangle {
+        id: dot
+        width: 14
+        height: 14
+        radius: width / 2
+        anchors.left: parent.left
+        // Centred in the collapsed window so the ping expands evenly instead
+        // of being cut off against one edge.
+        anchors.leftMargin: 19
+        anchors.verticalCenter: parent.verticalCenter
+        color: palette.highlight
+        // Bright enough to spot on a dark game, dim enough not to nag.
+        opacity: root.expanded ? 1.0 : (root.introducing ? 1.0 : 0.7)
+        Behavior on opacity { NumberAnimation { duration: 500 } }
+
+        // A soft ring at rest so it reads as a control rather than a stray
+        // pixel, and stays visible against a background its own colour.
+        border.color: palette.window
+        border.width: 2
 
         MouseArea {
             id: dotArea
