@@ -1,4 +1,5 @@
 import os
+import signal
 import sys
 import sqlite3
 
@@ -27,6 +28,12 @@ from PySide6.QtQml import QQmlApplicationEngine
 
 app = QGuiApplication(sys.argv)
 app.setDesktopFileName("fuwari")
+
+# Qt swallows exceptions raised inside a slot, so a KeyboardInterrupt landing in
+# a QTimer callback prints a traceback and the loop carries on. Restoring the C
+# default handler makes Ctrl+C terminate the process, which matters when the
+# main window is hidden behind the overlay and there is nothing to click.
+signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 bridge = Bridge()
 

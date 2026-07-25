@@ -68,6 +68,7 @@ pub fn start() -> (
                             fill_pct,
                         } => state.set_drag_style(rgb, border, radius, fill_pct),
                         Command::StopDrag => state.stop_drag(),
+                        Command::SetDebugBoxes { on, rgb } => state.set_debug_boxes(on, rgb),
                         Command::Shutdown => state.request_exit(),
                         _ => {}
                     }

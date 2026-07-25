@@ -49,6 +49,48 @@ lib.fuwari_stop_drag.argtypes = [ctypes.c_uint64]
 lib.fuwari_poll_drag.restype = ctypes.c_char_p
 lib.fuwari_poll_drag.argtypes = [ctypes.c_uint64]
 
+def _bind(name, restype, argtypes):
+    """Bind an optional symbol, tolerating a library older than this file.
+
+    ctypes resolves symbols on attribute access, so a missing one raises at
+    module scope and takes every feature down with it, including ones that
+    have nothing to do with it. Returning None instead confines the damage to
+    the feature that needs the symbol.
+    """
+    try:
+        fn = getattr(lib, name)
+    except AttributeError:
+        print(f"fuwari: {name} is missing from libfuwari_layer_shell.so; "
+              f"rebuild it with 'cd fuwari-layer-shell && cargo build --release'")
+        return None
+    fn.restype = restype
+    fn.argtypes = argtypes
+    return fn
+
+
+class Region(ctypes.Structure):
+    """Mirrors types::Region. Lengths are compositor logical pixels."""
+    _fields_ = [
+        ("x", ctypes.c_int32),
+        ("y", ctypes.c_int32),
+        ("width", ctypes.c_int32),
+        ("height", ctypes.c_int32),
+        ("index", ctypes.c_size_t),
+    ]
+
+
+_set_regions = _bind("fuwari_set_regions", None, [
+    ctypes.c_uint64,                    # handle
+    ctypes.POINTER(Region),             # regions
+    ctypes.c_size_t,                    # count
+])
+_poll_hover = _bind("fuwari_poll_hover", ctypes.c_int64, [ctypes.c_uint64])
+_set_debug_boxes = _bind("fuwari_set_debug_boxes", None, [
+    ctypes.c_uint64,                    # handle
+    ctypes.c_int32,                     # on
+    ctypes.c_uint32,                    # rgb, packed 0xRRGGBB
+])
+
 lib.fuwari_screen_size.restype = None
 lib.fuwari_screen_size.argtypes = [
     ctypes.c_uint64,
@@ -101,6 +143,42 @@ class LayerShell:
         buf = ctypes.cast(ptr, ctypes.POINTER(ctypes.c_ubyte * n)).contents
         rgba = np.frombuffer(buf, dtype=np.uint8).reshape((ch, cw, 4))
         return rgba[:, :, :3].copy()
+
+    # --- OCR overlay ---
+
+    def set_regions(self, regions):
+        """regions: iterable of (x, y, width, height, index), logical pixels.
+
+        The union of these rectangles becomes the surface's input region, so
+        the overlay is transparent to the pointer everywhere else. index is
+        carried back on hover and click, and several rectangles may share one
+        index when a token spans several characters.
+        """
+        if _set_regions is None:
+            return
+        regions = list(regions)
+        if not regions:
+            _set_regions(self.handle, None, 0)
+            return
+        arr = (Region * len(regions))()
+        for slot, (x, y, w, h, index) in zip(arr, regions):
+            slot.x, slot.y = int(x), int(y)
+            slot.width, slot.height = int(w), int(h)
+            slot.index = int(index)
+        _set_regions(self.handle, arr, len(regions))
+
+    def poll_hover(self):
+        """Region index under the pointer, -1 once it has left them all, or
+        -2 if nothing changed since the last call."""
+        if _poll_hover is None:
+            return -2
+        return int(_poll_hover(self.handle))
+
+    def set_debug_boxes(self, on, rgb=0x00FF00):
+        """Outline every region, to check placement against the glyphs."""
+        if _set_debug_boxes is None:
+            return
+        _set_debug_boxes(self.handle, 1 if on else 0, int(rgb) & 0xFFFFFF)
 
     def select_region(self, timeout=30.0):
         lib.fuwari_start_region_select(self.handle)
