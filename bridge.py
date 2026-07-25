@@ -77,6 +77,11 @@ class Bridge(QObject):
     windowMoved = Signal(int, int)
     windowDragCancelled = Signal()
     screenSizeChanged = Signal()
+    # token index, then its bounding rect on screen in logical pixels, then
+    # the lemma to look up
+    ocrHovered = Signal(int, int, int, int, int, str)
+    ocrHoverEnded = Signal()
+    overlayActiveChanged = Signal()
 
 
     def __init__(self):
@@ -85,8 +90,21 @@ class Bridge(QObject):
         self._sentence = ""
         self._history = deque(maxlen=100)
         self._ocr = None
+        # FUWARI_OCR_DEBUG=1 outlines the character boxes on the overlay so
+        # their placement can be checked against the glyphs underneath.
+        self._ocr_debug = os.getenv('FUWARI_OCR_DEBUG') == '1'
         self._layershell = None
         self._ocr_loading = False
+        # Regions and tokens as pushed to the overlay, so a hover index can be
+        # resolved back to a word and its rectangle.
+        self._ocr_regions = []
+        self._ocr_words = []
+        self._ocr_hover_last = -1
+        self._overlay_active = False
+        self._ocr_hover_timer = QTimer(self)
+        self._ocr_hover_timer.setInterval(16)
+        self._ocr_hover_timer.timeout.connect(self._poll_ocr_hover)
+        self._ocr_hover_timer.start()
         self._screen_w = 0
         self._screen_h = 0
 
@@ -302,6 +320,11 @@ class Bridge(QObject):
         if self._ocr and self._ocr._running:
             self._ocr.stop()
             self._ocr = None
+            self._ocr_regions = []
+            if self._overlay_active:
+                self.set_overlay_active(False)
+            else:
+                self._ls().set_regions([])
             return
 
         def start_ocr():
@@ -314,11 +337,181 @@ class Bridge(QObject):
                 self._set_ocr_loading(True)
                 ensure_pipeline_loaded()
                 self._set_ocr_loading(False)
-            self._ocr = OCRThread(self.process_clipboard, layershell)
+            self._ocr = OCRThread(self.process_clipboard, layershell,
+                                  on_geometry=self._on_ocr_geometry)
             self._ocr.set_region(region)
             self._ocr.start()
 
         threading.Thread(target=start_ocr, daemon=True).start()
+
+    def _on_ocr_geometry(self, chars, origin, logical, image):
+        """Put character boxes back on the screen as overlay input regions.
+
+        Called on the OCR thread. Boxes arrive in capture-image physical
+        pixels; the surface wants compositor logical pixels, so this is the one
+        place the display scale is applied. Asking for a region of `logical`
+        width and getting `image` back that many pixels wide or wider is what
+        gives us the scale, without having to be told it.
+        """
+        ls = self._ls()
+        if not chars or image is None:
+            ls.set_regions([])
+            return
+
+        req_w, req_h = logical
+        phys_h, phys_w = image.shape[0], image.shape[1]
+        if req_w <= 0 or req_h <= 0 or phys_w <= 0 or phys_h <= 0:
+            return
+        # Both axes are measured rather than assumed equal, so a compositor
+        # that rounds them differently doesn't skew the boxes.
+        sx = phys_w / req_w
+        sy = phys_h / req_h
+        ox, oy = origin
+
+        # Character position -> token index, so every character of a word
+        # carries the same region index and hovering anywhere in it is one
+        # event rather than one per character.
+        words = list(self._words)
+        token_of = [-1] * len(chars)
+        for ti, w in enumerate(words):
+            for i in range(max(0, w['start']), min(w['end'], len(chars))):
+                token_of[i] = ti
+
+        regions = []
+        for i, c in enumerate(chars):
+            bx, by, bw, bh = c.box
+            regions.append((
+                round(ox + bx / sx),
+                round(oy + by / sy),
+                max(1, round(bw / sx)),
+                max(1, round(bh / sy)),
+                token_of[i],
+            ))
+        # A character the tokenizer didn't cover has no word to look up.
+        regions = [r for r in regions if r[4] >= 0]
+        regions = self._close_gaps(regions)
+        self._ocr_regions = regions
+        self._ocr_words = words
+        self._ocr_hover_last = -1
+        if self._overlay_active:
+            ls.set_regions(regions)
+
+    @staticmethod
+    def _close_gaps(regions):
+        """Make neighbouring rectangles touch along a line of text.
+
+        The boxes are fitted to each glyph's ink, not to a uniform cell, so
+        rounding leaves one-pixel holes between them. The pointer crossing a
+        hole leaves every region and re-enters, which reads as the word being
+        left and re-entered. Closing gaps up to a quarter of a cell removes
+        that without merging rectangles that are genuinely apart.
+        """
+        if len(regions) < 2:
+            return regions
+        widths = sorted(r[2] for r in regions)
+        cell = widths[len(widths) // 2]
+        heights = sorted(r[3] for r in regions)
+        line_h = heights[len(heights) // 2]
+        limit = max(1, cell // 4)
+
+        ordered = sorted(regions, key=lambda r: (r[1], r[0]))
+        out = []
+        for i, r in enumerate(ordered):
+            x, y, w, h, idx = r
+            if i + 1 < len(ordered):
+                nx, ny = ordered[i + 1][0], ordered[i + 1][1]
+                same_line = abs(ny - y) * 2 < line_h
+                gap = nx - (x + w)
+                if same_line and 0 < gap <= limit:
+                    w += gap
+            out.append((x, y, w, h, idx))
+        return out
+
+    def _poll_ocr_hover(self):
+        if not self._overlay_active or self._layershell is None:
+            return
+        index = self._layershell.poll_hover()
+        if index == -2:
+            return
+        # take_hover collapses queued events to the latest, so an exit between
+        # two enters on the same token can be dropped; without this the same
+        # word would be reported twice running.
+        if index == self._ocr_hover_last:
+            return
+        self._ocr_hover_last = index
+        if index < 0:
+            print("ocr hover: out")
+            self.ocrHoverEnded.emit()
+            return
+        if index >= len(self._ocr_words):
+            return
+        rects = [r for r in self._ocr_regions if r[4] == index]
+        if not rects:
+            return
+        # Union of the token's characters, so the popup can be anchored to the
+        # whole word rather than to whichever character was under the cursor.
+        x0 = min(r[0] for r in rects)
+        y0 = min(r[1] for r in rects)
+        x1 = max(r[0] + r[2] for r in rects)
+        y1 = max(r[1] + r[3] for r in rects)
+        word = self._ocr_words[index]
+        lemma = word.get('lemma') or word.get('surface', '')
+        # Unconditional: hover only fires when the token changes, so this is
+        # human-paced, and it is the only signal that the chain is alive.
+        print(f"ocr hover: [{index}] {word.get('surface','')} -> {lemma} "
+              f"rect=({x0},{y0} {x1 - x0}x{y1 - y0})")
+        self.ocrHovered.emit(index, x0, y0, x1 - x0, y1 - y0, lemma)
+
+    def _get_overlay_active(self):
+        return self._overlay_active
+
+    overlayActive = Property(bool, _get_overlay_active,
+                             notify=overlayActiveChanged)
+
+    @Slot(bool)
+    def set_overlay_active(self, on):
+        """Put the character regions on screen, or take them off again.
+
+        Kept apart from toggle_ocr because scanning and hovering are different
+        things: OCR can run with the text going to the strip and no overlay at
+        all, which is the old behaviour.
+        """
+        on = bool(on)
+        if on == self._overlay_active:
+            return
+        ls = self._ls()
+        self._overlay_active = on
+        self._ocr_hover_last = -1
+        if on:
+            # Surface first: set_regions is a no-op until one exists. Regions
+            # may be empty if no scan has landed yet, which is harmless -- an
+            # empty input region means the overlay is transparent to the mouse.
+            ls.show()
+            ls.set_debug_boxes(self._ocr_debug)
+            ls.set_regions(self._ocr_regions)
+        else:
+            ls.set_regions([])
+            ls.hide()
+            self.ocrHoverEnded.emit()
+        self.overlayActiveChanged.emit()
+
+    @Slot()
+    def toggle_overlay(self):
+        """Overlay on, starting a scan first if none is running."""
+        if self._overlay_active:
+            self.set_overlay_active(False)
+            return
+        if self._ocr is None or not self._ocr._running:
+            # Region select blocks in its own thread; the surface goes up now
+            # and fills in when the first scan lands.
+            self.toggle_ocr()
+        self.set_overlay_active(True)
+
+    @Slot(bool)
+    def set_ocr_debug(self, on):
+        """Outline the character boxes on the overlay, to check alignment."""
+        self._ocr_debug = bool(on)
+        self._ls().set_debug_boxes(self._ocr_debug)
 
     @Slot(result=str)
     def get_dictionaries(self):

@@ -32,6 +32,10 @@ pub enum Command {
         fill_pct: i32,
     },
     StopDrag,
+    /// Outline every region so box placement can be checked against the glyphs
+    /// underneath. Development aid: the overlay draws nothing when this is off.
+    /// rgb is 0x00RRGGBB.
+    SetDebugBoxes { on: bool, rgb: u32 },
     Shutdown,
 }
 

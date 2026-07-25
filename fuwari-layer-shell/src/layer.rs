@@ -72,6 +72,12 @@ pub struct OverlayState {
     pointer_pos: (f64, f64),
     evt_tx: Option<std::sync::mpsc::Sender<crate::types::Event>>,
     regions: Vec<crate::types::Region>,
+    /// Index of the region under the pointer, so a move within one region
+    /// doesn't re-fire and a lookup isn't repeated per pixel.
+    hovered: Option<usize>,
+    /// Development aid only; see Command::SetDebugBoxes.
+    debug_boxes: bool,
+    debug_color: (u8, u8, u8),
     shm: Shm,
     width: u32,
     height: u32,
@@ -161,6 +167,8 @@ impl LayerShellHandler for OverlayState {
             }
         } else if self.first_configure {
             self.first_configure = false;
+            // Regions may have been set while unconfigured; apply them now.
+            self.update_input_region();
             self.draw(qh);
         }
     }
@@ -199,6 +207,10 @@ impl PointerHandler for OverlayState {
             let on_drag = self.drag_active
                 && self.drag_surface.as_ref()
                     .map_or(false, |s| s.wl_surface() == &event.surface);
+            let on_ocr = !on_drag
+                && !self.region_select
+                && self.layer_surface.as_ref()
+                    .map_or(false, |s| s.wl_surface() == &event.surface);
 
             match event.kind {
                 Enter { .. } => {
@@ -208,6 +220,13 @@ impl PointerHandler for OverlayState {
                         self.move_ghost(event.position);
                     } else if self.region_select {
                         self.drag_current = event.position;
+                    } else if on_ocr {
+                        self.update_hover(event.position);
+                    }
+                }
+                Leave { .. } => {
+                    if on_ocr {
+                        self.update_hover((-1.0, -1.0));
                     }
                 }
                 Motion { .. } => {
@@ -217,6 +236,8 @@ impl PointerHandler for OverlayState {
                     } else if self.region_select {
                         // Just record position; the frame-callback loop redraws.
                         self.drag_current = event.position;
+                    } else if on_ocr {
+                        self.update_hover(event.position);
                     }
                 }
                 Press { button, .. } => {
@@ -299,8 +320,40 @@ impl OverlayState {
 
     // --- OCR highlight surface methods (unchanged) ---
 
+    /// Index of the first region containing the point, in surface-local
+    /// logical pixels. Half-open on the far edges so touching rectangles do
+    /// not both claim a boundary pixel.
+    fn hit_test(&self, x: f64, y: f64) -> Option<usize> {
+        self.regions
+            .iter()
+            .find(|r| {
+                x >= r.x as f64
+                    && x < (r.x + r.width) as f64
+                    && y >= r.y as f64
+                    && y < (r.y + r.height) as f64
+            })
+            .map(|r| r.index)
+    }
+
+    /// Emits only on transitions, so moving within one word is silent.
+    fn update_hover(&mut self, pos: (f64, f64)) {
+        let hit = self.hit_test(pos.0, pos.1);
+        if hit == self.hovered {
+            return;
+        }
+        self.hovered = hit;
+        if let Some(tx) = &self.evt_tx {
+            match hit {
+                Some(i) => tx.send(crate::types::Event::HoverEnter(i)).ok(),
+                None => tx.send(crate::types::Event::HoverExit).ok(),
+            };
+        }
+    }
+
     pub fn set_regions(&mut self, regions: Vec<crate::types::Region>) {
         self.regions = regions;
+        // The old index means nothing against the new set.
+        self.hovered = None;
         self.update_input_region();
         let qh = self.qh.clone();
         self.draw(&qh);
@@ -339,6 +392,10 @@ impl OverlayState {
     }
 
     fn update_input_region(&mut self) {
+        // Deferred until the surface is configured; configure() reapplies.
+        if self.first_configure {
+            return;
+        }
         let surface = match &self.layer_surface {
             Some(s) => s.wl_surface().clone(),
             None => return,
@@ -354,7 +411,26 @@ impl OverlayState {
         surface.commit();
     }
 
+    pub fn set_debug_boxes(&mut self, on: bool, rgb: u32) {
+        self.debug_boxes = on;
+        self.debug_color = (
+            ((rgb >> 16) & 0xFF) as u8,
+            ((rgb >> 8) & 0xFF) as u8,
+            (rgb & 0xFF) as u8,
+        );
+        let qh = self.qh.clone();
+        self.draw(&qh);
+    }
+
     fn draw(&mut self, _qh: &QueueHandle<Self>) {
+        // Attaching a buffer before the compositor has configured the surface
+        // is a protocol error that kills the connection. show() and
+        // set_regions() arrive back to back, so this is reachable before the
+        // first configure has landed; configure() draws once it does.
+        if self.layer_surface.is_none() || self.first_configure {
+            return;
+        }
+
         let width = self.width;
         let height = self.height;
         let stride = width as i32 * 4;
@@ -367,7 +443,9 @@ impl OverlayState {
             .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Argb8888)
             .expect("failed to create buffer");
 
-        // fully transparent base
+        // The overlay is invisible at rest. Only the hovered token is ever
+        // painted, and these outlines are an opt-in development aid; filling
+        // every region would cover the text we are trying to line up against.
         for chunk in canvas.chunks_exact_mut(4) {
             chunk[0] = 0;
             chunk[1] = 0;
@@ -375,22 +453,23 @@ impl OverlayState {
             chunk[3] = 0;
         }
 
-        // paint semi-transparent highlight over each region
-        for region in &self.regions {
-            let x0 = region.x.max(0) as usize;
-            let y0 = region.y.max(0) as usize;
-            let x1 = (region.x + region.width).min(width as i32) as usize;
-            let y1 = (region.y + region.height).min(height as i32) as usize;
-
-            for y in y0..y1 {
+        if self.debug_boxes {
+            let color = self.debug_color;
+            for region in &self.regions {
+                let x0 = region.x.max(0);
+                let y0 = region.y.max(0);
+                let x1 = (region.x + region.width).min(width as i32);
+                let y1 = (region.y + region.height).min(height as i32);
+                if x1 <= x0 || y1 <= y0 {
+                    continue;
+                }
                 for x in x0..x1 {
-                    let offset = y * width as usize * 4 + x * 4;
-                    if offset + 3 < canvas.len() {
-                        canvas[offset]     = 255; // blue
-                        canvas[offset + 1] = 200; // green
-                        canvas[offset + 2] = 50;  // red  → amber/gold color
-                        canvas[offset + 3] = 80;  // alpha (semi-transparent)
-                    }
+                    put_px(canvas, width, x, y0, color);
+                    put_px(canvas, width, x, y1 - 1, color);
+                }
+                for y in y0..y1 {
+                    put_px(canvas, width, x0, y, color);
+                    put_px(canvas, width, x1 - 1, y, color);
                 }
             }
         }
@@ -758,6 +837,9 @@ pub fn new(
         pointer_pos: (0.0, 0.0),
         evt_tx: Some(evt_tx),
         regions: Vec::new(),
+        hovered: None,
+        debug_boxes: false,
+        debug_color: (0, 255, 0),
         shm,
         width: 1646,
         height: 1097,
@@ -766,4 +848,18 @@ pub fn new(
         exit: false,
     };
     (state, event_queue, conn)
+}
+
+/// ARGB8888 little-endian: bytes are B, G, R, A.
+fn put_px(canvas: &mut [u8], width: u32, x: i32, y: i32, rgb: (u8, u8, u8)) {
+    if x < 0 || y < 0 || x >= width as i32 {
+        return;
+    }
+    let off = (y as usize * width as usize + x as usize) * 4;
+    if off + 3 < canvas.len() {
+        canvas[off] = rgb.2;
+        canvas[off + 1] = rgb.1;
+        canvas[off + 2] = rgb.0;
+        canvas[off + 3] = 255;
+    }
 }

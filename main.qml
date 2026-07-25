@@ -65,6 +65,7 @@ Window {
   LayerShell.Window.exclusionZone: -1
 
   property bool ocrActive: false
+  readonly property bool overlayActive: bridge ? bridge.overlayActive : false
 
   Rectangle {
     anchors.top: parent.top
@@ -168,7 +169,7 @@ Window {
           ? Qt.hsva(palette.highlight.hsvHue, 0.8, palette.highlight.hsvValue, 1.0)
           : palette.windowText
       anchors.top: parent.top
-      anchors.right: historyIcon.left
+      anchors.right: overlayIcon.left
       anchors.margins: 5
       z: 1
 
@@ -183,9 +184,74 @@ Window {
         cursorShape: Qt.PointingHandCursor
       }
     }
+
+    Text {
+      id: overlayIcon
+      text: "▣"
+      font.pointSize: 11
+      color: mainWindow.overlayActive || overlayMouse.containsMouse
+        ? Qt.hsva(palette.highlight.hsvHue, 0.8, palette.highlight.hsvValue, 1.0)
+        : palette.windowText
+      anchors.top: parent.top
+      anchors.right: historyIcon.left
+      anchors.margins: 5
+      z: 1
+
+      MouseArea {
+        id: overlayMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: bridge.toggle_overlay()
+        cursorShape: Qt.PointingHandCursor
+      }
+    }
   }
 
   SystemPalette { id: palette }
+
+  OverlayHintWindow {
+    id: overlayHint
+    onDismissed: bridge.set_overlay_active(false)
+  }
+
+  // Anchored to the hovered word rather than to the main window, which is
+  // hidden while the overlay is up. The rect arrives in compositor pixels,
+  // the same units definitionWindow positions in, so only the popup's own
+  // Qt-sized dimensions need scaling.
+  function showOverlayLookup(x, y, w, h, term) {
+    var res = bridge.lookup(term)
+    if (res === "") {
+      hideTimer.restart()
+      return
+    }
+    var results = JSON.parse(res)
+    var first = results[0]
+    definitionWindow.word = first.Kanji
+    definitionWindow.reading = first.Reading
+    definitionWindow.pos = first["Part of Speech"].join(", ")
+    definitionWindow.freq = first.Frequency ? "JPDB: " + first.Frequency : ""
+    definitionWindow.currentResults = results
+
+    var ds = mainWindow.dragScale
+    var defW = Math.round(definitionWindow.width * ds)
+    var defH = Math.round(definitionWindow.height * ds)
+
+    var sx = x
+    if (sx + defW > mainWindow.screenW) sx = mainWindow.screenW - defW - 8
+    if (sx < 0) sx = 0
+
+    // above the word, dropping below only when there is no room
+    var sy = y - defH - 4
+    if (sy < 0) {
+      sy = y + h + 4
+      if (sy + defH > mainWindow.screenH)
+        sy = Math.max(0, mainWindow.screenH - defH - 8)
+    }
+    definitionWindow.posX = sx
+    definitionWindow.posY = sy
+    hideTimer.stop()
+    definitionWindow.visible = true
+  }
 
   SettingsWindow { id: settingsWindow }
   DefinitionWindow { id: definitionWindow }
@@ -222,7 +288,6 @@ Window {
     target: bridge
     function onWordsChanged() {
       sentenceEdit.hoverIndex = -1
-      sentenceEdit.pendingIndex = -1
     }
     // final position from the crate, in compositor pixels, applied once
     function onWindowMoved(x, y) {
@@ -237,6 +302,35 @@ Window {
     }
     function onWindowDragCancelled() {
       mainWindow.dragging = false
+    }
+    function onOverlayActiveChanged() {
+      var on = bridge.overlayActive
+      if (on) {
+        var hintW = Math.round(overlayHint.width * mainWindow.dragScale)
+        overlayHint.posX = Math.max(0, Math.round((mainWindow.screenW - hintW) / 2))
+        overlayHint.posY = 24
+        overlayHint.visible = true
+        // Hiding the main window removes the only other way back, so keep it
+        // if the hint did not actually map. Better an overlay with the window
+        // still on screen than one with no exit at all.
+        console.log("OVERLAY on | hint visible:", overlayHint.visible,
+                    "| hint pos:", overlayHint.posX, overlayHint.posY,
+                    "| size:", overlayHint.width, "x", overlayHint.height)
+        if (overlayHint.visible)
+          mainWindow.visible = false
+        else
+          console.log("OVERLAY: hint failed to show, keeping main window")
+      } else {
+        overlayHint.visible = false
+        definitionWindow.visible = false
+        mainWindow.visible = true
+      }
+    }
+    function onOcrHovered(index, x, y, w, h, lemma) {
+      mainWindow.showOverlayLookup(x, y, w, h, lemma)
+    }
+    function onOcrHoverEnded() {
+      hideTimer.restart()
     }
   }
 

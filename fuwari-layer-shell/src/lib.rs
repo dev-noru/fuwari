@@ -59,6 +59,26 @@ impl FuwariHandle {
         }
     }
 
+    /// Latest hover state, discarding intermediate transitions: the pointer
+    /// may have crossed several regions between polls and only where it came
+    /// to rest matters. Returns the index, -1 on exit, -2 if unchanged.
+    fn take_hover(&mut self) -> i64 {
+        self.drain();
+        let mut latest = -2i64;
+        self.stash.retain(|e| match e {
+            types::Event::HoverEnter(i) => {
+                latest = *i as i64;
+                false
+            }
+            types::Event::HoverExit => {
+                latest = -1;
+                false
+            }
+            _ => true,
+        });
+        latest
+    }
+
     fn take_click(&mut self) -> Option<usize> {
         self.drain();
         let idx = self
@@ -191,6 +211,33 @@ pub extern "C" fn fuwari_poll_event(ptr: *mut FuwariHandle) -> i32 {
             Some(index) => index as i32,
             None => -1,
         }
+    }
+}
+
+/// Index of the region under the pointer, -1 when it has left them all, or
+/// -2 when nothing has changed since the last call.
+#[unsafe(no_mangle)]
+pub extern "C" fn fuwari_poll_hover(ptr: *mut FuwariHandle) -> i64 {
+    if ptr.is_null() {
+        return -2;
+    }
+    unsafe { (&mut *ptr).take_hover() }
+}
+
+/// Outline every region set by `fuwari_set_regions`, so their placement can be
+/// checked against the glyphs underneath. Development aid; off by default.
+/// `rgb` is 0x00RRGGBB.
+#[unsafe(no_mangle)]
+pub extern "C" fn fuwari_set_debug_boxes(ptr: *mut FuwariHandle, on: i32, rgb: u32) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let handle = &*ptr;
+        handle
+            .cmd_tx
+            .send(crate::types::Command::SetDebugBoxes { on: on != 0, rgb })
+            .ok();
     }
 }
 
