@@ -224,6 +224,47 @@ pub extern "C" fn fuwari_poll_hover(ptr: *mut FuwariHandle) -> i64 {
     unsafe { (&mut *ptr).take_hover() }
 }
 
+/// Paint `data` over the hovered token. `data` is premultiplied ARGB8888,
+/// `width * height * 4` bytes, in surface-local logical pixels; it is copied
+/// before this returns, so the caller may free it immediately.
+#[unsafe(no_mangle)]
+pub extern "C" fn fuwari_set_highlight(
+    ptr: *mut FuwariHandle,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    data: *const u8,
+    len: usize,
+) {
+    if ptr.is_null() || data.is_null() || width <= 0 || height <= 0 {
+        return;
+    }
+    if len < (width as usize) * (height as usize) * 4 {
+        return;
+    }
+    unsafe {
+        let handle = &*ptr;
+        let copied = std::slice::from_raw_parts(data, len).to_vec();
+        handle
+            .cmd_tx
+            .send(crate::types::Command::SetHighlight { x, y, width, height, data: copied })
+            .ok();
+    }
+}
+
+/// Remove the recoloured patch, leaving the glyphs as the game drew them.
+#[unsafe(no_mangle)]
+pub extern "C" fn fuwari_clear_highlight(ptr: *mut FuwariHandle) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let handle = &*ptr;
+        handle.cmd_tx.send(crate::types::Command::ClearHighlight).ok();
+    }
+}
+
 /// Outline every region set by `fuwari_set_regions`, so their placement can be
 /// checked against the glyphs underneath. Development aid; off by default.
 /// `rgb` is 0x00RRGGBB.

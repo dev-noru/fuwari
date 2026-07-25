@@ -85,6 +85,15 @@ _set_regions = _bind("fuwari_set_regions", None, [
     ctypes.c_size_t,                    # count
 ])
 _poll_hover = _bind("fuwari_poll_hover", ctypes.c_int64, [ctypes.c_uint64])
+_set_highlight = _bind("fuwari_set_highlight", None, [
+    ctypes.c_uint64,                    # handle
+    ctypes.c_int32, ctypes.c_int32,     # x, y
+    ctypes.c_int32, ctypes.c_int32,     # width, height
+    ctypes.c_char_p,                    # premultiplied ARGB8888
+    ctypes.c_size_t,                    # byte count
+])
+_clear_highlight = _bind("fuwari_clear_highlight", None, [ctypes.c_uint64])
+_warned_highlight = False
 _set_debug_boxes = _bind("fuwari_set_debug_boxes", None, [
     ctypes.c_uint64,                    # handle
     ctypes.c_int32,                     # on
@@ -173,6 +182,27 @@ class LayerShell:
         if _poll_hover is None:
             return -2
         return int(_poll_hover(self.handle))
+
+    def set_highlight(self, x, y, width, height, data):
+        """Paint premultiplied ARGB8888 pixels over the hovered token.
+
+        Copied on the Rust side before the call returns, so `data` does not
+        need to outlive it.
+        """
+        if _set_highlight is None:
+            global _warned_highlight
+            if not _warned_highlight:
+                _warned_highlight = True
+                print("fuwari: set_highlight is a no-op, the Rust library "
+                      "predates it -- rebuild fuwari-layer-shell")
+            return
+        _set_highlight(self.handle, int(x), int(y), int(width), int(height),
+                       data, len(data))
+
+    def clear_highlight(self):
+        if _clear_highlight is None:
+            return
+        _clear_highlight(self.handle)
 
     def set_debug_boxes(self, on, rgb=0x00FF00):
         """Outline every region, to check placement against the glyphs."""

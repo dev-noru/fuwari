@@ -67,6 +67,22 @@ Window {
   property bool ocrActive: false
   readonly property bool overlayActive: bridge ? bridge.overlayActive : false
 
+  // Which surface the crate's drag ghost is currently moving. The drag
+  // machinery is agnostic, so the answer has to be remembered here.
+  property string dragTarget: ""
+  // Remembered across activations so the dot stays where it was put.
+  // -1 means "not placed yet", which resolves to the left edge, centred.
+  property int dotX: -1
+  property int dotY: -1
+
+  // Bounding box of everything the scan recognised, compositor pixels. The
+  // popup clears this rather than just the hovered word, so it never lands on
+  // an earlier line of the same sentence.
+  property int textX: 0
+  property int textY: 0
+  property int textW: 0
+  property int textH: 0
+
   Rectangle {
     anchors.top: parent.top
     anchors.left: parent.left
@@ -212,18 +228,46 @@ Window {
   OverlayHintWindow {
     id: overlayHint
     onDismissed: bridge.set_overlay_active(false)
+    onDragStarted: (mx, my) => {
+      if (mainWindow.dragging) return
+      mainWindow.dragging = true
+      mainWindow.dragTarget = "dot"
+      var s = mainWindow.dragScale
+      bridge.set_drag_style(palette.highlight.toString(),
+                            Math.max(1, Math.round(mainWindow.ghostBorder * s)),
+                            Math.round(13 * s),
+                            mainWindow.ghostFillPct)
+      bridge.start_window_drag(overlayHint.posX, overlayHint.posY,
+                               Math.round(overlayHint.width * s),
+                               Math.round(overlayHint.height * s),
+                               Math.round(mx * s), Math.round(my * s))
+    }
+  }
+
+  function placeDot() {
+    var s = mainWindow.dragScale
+    var w = Math.round(overlayHint.expandedWidth * s)
+    var h = Math.round(overlayHint.height * s)
+    if (mainWindow.dotX < 0 || mainWindow.dotY < 0) {
+      // Left edge, vertically centred, out of the way of the text.
+      mainWindow.dotX = 6
+      mainWindow.dotY = Math.max(0, Math.round((mainWindow.screenH - h) / 2))
+    }
+    overlayHint.posX = Math.max(0, Math.min(mainWindow.screenW - w, mainWindow.dotX))
+    overlayHint.posY = Math.max(0, Math.min(mainWindow.screenH - h, mainWindow.dotY))
   }
 
   // Anchored to the hovered word rather than to the main window, which is
   // hidden while the overlay is up. The rect arrives in compositor pixels,
   // the same units definitionWindow positions in, so only the popup's own
   // Qt-sized dimensions need scaling.
-  function showOverlayLookup(x, y, w, h, term) {
+  // Fills the popup from a lookup, returning false when there is nothing to
+  // show. Shared by the word strip and the overlay, which differ only in where
+  // they then place it.
+  function fillDefinition(term) {
     var res = bridge.lookup(term)
-    if (res === "") {
-      hideTimer.restart()
-      return
-    }
+    if (res === "")
+      return false
     var results = JSON.parse(res)
     var first = results[0]
     definitionWindow.word = first.Kanji
@@ -231,6 +275,14 @@ Window {
     definitionWindow.pos = first["Part of Speech"].join(", ")
     definitionWindow.freq = first.Frequency ? "JPDB: " + first.Frequency : ""
     definitionWindow.currentResults = results
+    return true
+  }
+
+  function showOverlayLookup(x, y, w, h, term) {
+    if (!mainWindow.fillDefinition(term)) {
+      hideTimer.restart()
+      return
+    }
 
     var ds = mainWindow.dragScale
     var defW = Math.round(definitionWindow.width * ds)
@@ -240,10 +292,16 @@ Window {
     if (sx + defW > mainWindow.screenW) sx = mainWindow.screenW - defW - 8
     if (sx < 0) sx = 0
 
-    // above the word, dropping below only when there is no room
-    var sy = y - defH - 4
+    // Clear of the whole text block, not just the hovered word: a sentence
+    // wraps over several lines and opening upward from the last one would
+    // cover the lines being read.
+    var blockTop = mainWindow.textH > 0 ? mainWindow.textY : y
+    var blockBottom = mainWindow.textH > 0
+      ? mainWindow.textY + mainWindow.textH : y + h
+    var sy = blockTop - defH - 8
     if (sy < 0) {
-      sy = y + h + 4
+      sy = blockBottom + 8
+      // Neither side fits, so sit below and accept the clamp.
       if (sy + defH > mainWindow.screenH)
         sy = Math.max(0, mainWindow.screenH - defH - 8)
     }
@@ -271,7 +329,13 @@ Window {
   Timer {
     id: hideTimer
     interval: 250
-    onTriggered: definitionWindow.visible = false
+    onTriggered: {
+      // Never hide something the pointer is sitting on. onPopupHoveredChanged
+      // restarts this once the pointer actually leaves.
+      if (definitionWindow.popupHovered)
+        return
+      definitionWindow.visible = false
+    }
   }
 
   Connections {
@@ -291,6 +355,20 @@ Window {
     }
     // final position from the crate, in compositor pixels, applied once
     function onWindowMoved(x, y) {
+      if (mainWindow.dragTarget === "dot") {
+        var s = mainWindow.dragScale
+        var w = Math.round(overlayHint.expandedWidth * s)
+        var h = Math.round(overlayHint.height * s)
+        mainWindow.dotX = Math.max(0, Math.min(mainWindow.screenW - w, x))
+        mainWindow.dotY = Math.max(0, Math.min(mainWindow.screenH - h, y))
+        overlayHint.posX = mainWindow.dotX
+        overlayHint.posY = mainWindow.dotY
+        mainWindow.dragTarget = ""
+        mainWindow.dragging = false
+        // Margins are double-buffered; this surface has to render to apply them.
+        bridge.nudge_object(overlayHint)
+        return
+      }
       console.log("DRAG end | crate returned:", x, y)
       var s = mainWindow.dragScale
       var nx = Math.round(x / s)
@@ -301,25 +379,22 @@ Window {
       bridge.nudge()
     }
     function onWindowDragCancelled() {
+      mainWindow.dragTarget = ""
       mainWindow.dragging = false
     }
     function onOverlayActiveChanged() {
       var on = bridge.overlayActive
       if (on) {
-        var hintW = Math.round(overlayHint.width * mainWindow.dragScale)
-        overlayHint.posX = Math.max(0, Math.round((mainWindow.screenW - hintW) / 2))
-        overlayHint.posY = 24
+        mainWindow.placeDot()
+        bridge.set_highlight_color(palette.highlight.toString())
         overlayHint.visible = true
         // Hiding the main window removes the only other way back, so keep it
         // if the hint did not actually map. Better an overlay with the window
         // still on screen than one with no exit at all.
-        console.log("OVERLAY on | hint visible:", overlayHint.visible,
-                    "| hint pos:", overlayHint.posX, overlayHint.posY,
-                    "| size:", overlayHint.width, "x", overlayHint.height)
+        // Only hide the main window once the dot has actually mapped,
+        // otherwise there would be no way back.
         if (overlayHint.visible)
           mainWindow.visible = false
-        else
-          console.log("OVERLAY: hint failed to show, keeping main window")
       } else {
         overlayHint.visible = false
         definitionWindow.visible = false
@@ -330,7 +405,20 @@ Window {
       mainWindow.showOverlayLookup(x, y, w, h, lemma)
     }
     function onOcrHoverEnded() {
+      // Hover intent delays this by HOVER_DWELL, so by the time it arrives the
+      // pointer is often already on the popup. Restarting then is fatal:
+      // popupHovered is already true, so no change fires afterwards and
+      // nothing cancels the timer. The strip never hits this because there the
+      // exit fires before the popup is entered.
+      if (definitionWindow.popupHovered)
+        return
       hideTimer.restart()
+    }
+    function onOcrBoundsChanged(x, y, w, h) {
+      mainWindow.textX = x
+      mainWindow.textY = y
+      mainWindow.textW = w
+      mainWindow.textH = h
     }
   }
 
@@ -491,22 +579,15 @@ Window {
           lastMx = -1
           lastMy = -1
           hoverIndex = -1
-          if (definitionWindow.visible) hideTimer.restart()
+          if (definitionWindow.visible && !definitionWindow.popupHovered)
+            hideTimer.restart()
         }
 
         function showLookup(term, start, end) {
-          var res = bridge.lookup(term)
-          if (res === "") {
+          if (!mainWindow.fillDefinition(term)) {
             hideTimer.restart()
             return
           }
-          var results = JSON.parse(res)
-          var first = results[0]
-          definitionWindow.word = first.Kanji
-          definitionWindow.reading = first.Reading
-          definitionWindow.pos = first["Part of Speech"].join(", ")
-          definitionWindow.freq = first.Frequency ? "JPDB: " + first.Frequency : ""
-          definitionWindow.currentResults = results
 
           if (start >= 0) {
             var r = positionToRectangle(start)

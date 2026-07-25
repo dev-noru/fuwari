@@ -6,6 +6,8 @@ import os
 import base64
 import threading
 import json
+import numpy as np
+from PIL import Image
 import sqlite3
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer
 from dictionary import get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, parse_sense, DB_PATH
@@ -67,6 +69,38 @@ def _is_related_form(sense):
     joined = ''.join(sense['glosses'])
     return bool(joined) and not _LATIN.search(joined) and len(joined) <= 4
 
+# How long a token must stay under the pointer before it counts as hovered.
+# Long enough that crossing words on the way to the popup does not register,
+# short enough that reading word by word still feels immediate.
+HOVER_DWELL = 0.11
+
+# Glyph masking. Absolute brightness thresholds do not survive a change of
+# scene -- white text over a sunlit sky and white text over a dark room need
+# different cutoffs -- so the range is taken from each patch instead. Within
+# one character cell the glyph is reliably the brightest, least saturated
+# thing present, whatever is behind it.
+GLYPH_DARK_PCT = 55        # percentile of the patch treated as background
+GLYPH_INK_PCT = 98         # percentile treated as solid ink
+GLYPH_SAT_MAX = 0.45       # more colourful than this is scenery, not text
+
+
+def _grow(acc, key, x0, y0, x1, y1):
+    """Accumulate a bounding box per key."""
+    b = acc.get(key)
+    if b is None:
+        acc[key] = [x0, y0, x1, y1]
+    else:
+        b[0] = min(b[0], x0)
+        b[1] = min(b[1], y0)
+        b[2] = max(b[2], x1)
+        b[3] = max(b[3], y1)
+
+
+def _rect(b):
+    """[x0, y0, x1, y1] -> (x, y, w, h)"""
+    return (b[0], b[1], b[2] - b[0], b[3] - b[1])
+
+
 class Bridge(QObject):
     wordsChanged = Signal()
     clipboardUpdated = Signal()
@@ -82,6 +116,9 @@ class Bridge(QObject):
     ocrHovered = Signal(int, int, int, int, int, str)
     ocrHoverEnded = Signal()
     overlayActiveChanged = Signal()
+    # Bounding box of all recognised text, in compositor logical pixels, so a
+    # popup can be placed clear of every line rather than just the hovered word.
+    ocrBoundsChanged = Signal(int, int, int, int)
 
 
     def __init__(self):
@@ -101,6 +138,24 @@ class Bridge(QObject):
         self._ocr_words = []
         self._ocr_hover_last = -1
         self._overlay_active = False
+        # Set on the OCR worker thread, consumed by the hover timer on the Qt
+        # thread: the overlay must not come up until the region is chosen, and
+        # activating it touches windows, which only the Qt thread may do.
+        self._pending_overlay = False
+        self._ocr_bounds = (0, 0, 0, 0)
+        # Hover intent: a token has to be held before it counts, so a cursor
+        # travelling to the popup does not fire a lookup for every word it
+        # crosses on the way.
+        self._hover_candidate = None
+        self._hover_since = 0.0
+        # Retained so the hovered token's pixels can be sampled back out of the
+        # frame they were recognised in.
+        self._ocr_frame = None
+        # token index -> (rect on screen, rect in the captured frame)
+        self._ocr_tokens = {}
+        self._ocr_scale = (1.0, 1.0)
+        self._ocr_origin = (0, 0)
+        self._highlight_rgb = (255, 190, 60)
         self._ocr_hover_timer = QTimer(self)
         self._ocr_hover_timer.setInterval(16)
         self._ocr_hover_timer.timeout.connect(self._poll_ocr_hover)
@@ -140,6 +195,16 @@ class Bridge(QObject):
 
     def set_window(self, win):
         self._window = win
+
+    @Slot(QObject)
+    def nudge_object(self, win):
+        """Same as nudge, for any window rather than the main one.
+
+        Layer-shell margins are double-buffered, so moving a surface does
+        nothing until that surface renders again.
+        """
+        if win is not None:
+            win.requestUpdate()
 
     @Slot()
     def nudge(self):
@@ -321,6 +386,7 @@ class Bridge(QObject):
             self._ocr.stop()
             self._ocr = None
             self._ocr_regions = []
+            self._pending_overlay = False
             if self._overlay_active:
                 self.set_overlay_active(False)
             else:
@@ -331,6 +397,8 @@ class Bridge(QObject):
             layershell = self._ls()
             region = layershell.select_region()
             if not region:
+                # Selection cancelled, so nothing is waiting to be shown.
+                self._pending_overlay = False
                 return
             from ocr import OCRThread, is_pipeline_loaded, ensure_pipeline_loaded
             if not is_pipeline_loaded():
@@ -378,21 +446,48 @@ class Bridge(QObject):
                 token_of[i] = ti
 
         regions = []
+        phys = {}
         for i, c in enumerate(chars):
+            ti = token_of[i]
+            # A character the tokenizer didn't cover has no word to look up.
+            if ti < 0:
+                continue
             bx, by, bw, bh = c.box
             regions.append((
                 round(ox + bx / sx),
                 round(oy + by / sy),
                 max(1, round(bw / sx)),
                 max(1, round(bh / sy)),
-                token_of[i],
+                ti,
             ))
-        # A character the tokenizer didn't cover has no word to look up.
-        regions = [r for r in regions if r[4] >= 0]
+            _grow(phys, ti, bx, by, bx + bw, by + bh)
+
         regions = self._close_gaps(regions)
+
+        # One record per token, built once per scan: where the word sits on
+        # screen, and where to sample it from in the captured frame. Hovering
+        # is then a dictionary lookup instead of a scan over every character.
+        logical = {}
+        for x, y, w, h, ti in regions:
+            _grow(logical, ti, x, y, x + w, y + h)
+        self._ocr_tokens = {
+            ti: (_rect(box), _rect(phys[ti]))
+            for ti, box in logical.items() if ti in phys
+        }
+
         self._ocr_regions = regions
         self._ocr_words = words
-        self._ocr_hover_last = -1
+        self._ocr_frame = image
+        self._ocr_scale = (sx, sy)
+        self._ocr_origin = (ox, oy)
+        self._reset_hover()
+        if logical:
+            bx0 = min(b[0] for b in logical.values())
+            by0 = min(b[1] for b in logical.values())
+            bx1 = max(b[2] for b in logical.values())
+            by1 = max(b[3] for b in logical.values())
+            self._ocr_bounds = (bx0, by0, bx1 - bx0, by1 - by0)
+            self.ocrBoundsChanged.emit(*self._ocr_bounds)
         if self._overlay_active:
             ls.set_regions(regions)
 
@@ -427,39 +522,139 @@ class Bridge(QObject):
             out.append((x, y, w, h, idx))
         return out
 
+    @Slot(str)
+    def set_highlight_color(self, color):
+        """color is a QML colour string, "#rrggbb" or "#aarrggbb"."""
+        text = color.lstrip("#")
+        if len(text) == 8:
+            text = text[2:]
+        try:
+            v = int(text, 16)
+        except ValueError:
+            return
+        self._highlight_rgb = ((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF)
+
+    def _glyph_patch(self, index):
+        """Recoloured pixels for one token, ready to sit over the original.
+
+        The pixels come from the frame the text was recognised in, at the boxes
+        it was recognised at, so the result registers with the glyphs exactly:
+        no font matching, and nothing to drift. The glyph's own brightness
+        becomes the alpha, which keeps the antialiased edges and leaves the
+        game's dark outline showing through underneath.
+
+        Returns (x, y, w, h, premultiplied ARGB bytes) in logical pixels.
+        """
+        frame = self._ocr_frame
+        if frame is None:
+            return None
+        entry = self._ocr_tokens.get(index)
+        if entry is None:
+            return None
+        pxx, pyy, pww, phh = entry[1]
+        px0, py0, px1, py1 = pxx, pyy, pxx + pww, pyy + phh
+        fh, fw = frame.shape[0], frame.shape[1]
+        px0, py0 = max(0, px0), max(0, py0)
+        px1, py1 = min(fw, px1), min(fh, py1)
+        if px1 <= px0 or py1 <= py0:
+            return None
+
+        sx, sy = self._ocr_scale
+        ox, oy = self._ocr_origin
+        lx = round(ox + px0 / sx)
+        ly = round(oy + py0 / sy)
+        lw = max(1, round((px1 - px0) / sx))
+        lh = max(1, round((py1 - py0) / sy))
+
+        crop = np.asarray(frame[py0:py1, px0:px1, :3], dtype=np.float32)
+        # Downscale to the surface's resolution before masking, so the alpha is
+        # area-averaged rather than point-sampled and the edges stay smooth.
+        if (px1 - px0, py1 - py0) != (lw, lh):
+            crop = np.asarray(
+                Image.fromarray(crop.astype(np.uint8)).resize((lw, lh), Image.LANCZOS),
+                dtype=np.float32,
+            )
+
+        mx = crop.max(axis=2)
+        mn = crop.min(axis=2)
+        value = mx / 255.0
+        sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1.0), 0.0)
+
+        lo = np.percentile(value, GLYPH_DARK_PCT)
+        hi = np.percentile(value, GLYPH_INK_PCT)
+        alpha = (value - lo) / max(1e-6, hi - lo)
+        # The dark outline the game draws round its text is low alpha here, so
+        # it survives untinted and keeps the glyph legible whatever colour the
+        # palette supplies and whatever is behind it.
+        alpha *= 1.0 - np.clip(sat / GLYPH_SAT_MAX, 0.0, 1.0)
+        np.clip(alpha, 0.0, 1.0, out=alpha)
+
+        r, g, b = self._highlight_rgb
+        out = np.zeros((lh, lw, 4), dtype=np.uint8)
+        # wl_shm ARGB8888 is premultiplied, so the colour is scaled by alpha
+        # rather than carried alongside it.
+        out[:, :, 0] = (b * alpha).astype(np.uint8)
+        out[:, :, 1] = (g * alpha).astype(np.uint8)
+        out[:, :, 2] = (r * alpha).astype(np.uint8)
+        out[:, :, 3] = (alpha * 255.0).astype(np.uint8)
+        return lx, ly, lw, lh, out.tobytes()
+
+    def _reset_hover(self):
+        self._ocr_hover_last = -1
+        self._hover_candidate = None
+        self._hover_since = 0.0
+
     def _poll_ocr_hover(self):
+        if self._pending_overlay:
+            if self._ocr is not None and self._ocr._running:
+                self._pending_overlay = False
+                self.set_overlay_active(True)
+            return
         if not self._overlay_active or self._layershell is None:
             return
-        index = self._layershell.poll_hover()
-        if index == -2:
+        polled = self._layershell.poll_hover()
+        if polled != -2 and polled != self._hover_candidate:
+            self._hover_candidate = polled
+            self._hover_since = time.monotonic()
+
+        index = self._hover_candidate
+        if index is None:
             return
         # take_hover collapses queued events to the latest, so an exit between
         # two enters on the same token can be dropped; without this the same
         # word would be reported twice running.
         if index == self._ocr_hover_last:
             return
+        if time.monotonic() - self._hover_since < HOVER_DWELL:
+            return
         self._ocr_hover_last = index
         if index < 0:
             print("ocr hover: out")
+            self._layershell.clear_highlight()
             self.ocrHoverEnded.emit()
             return
         if index >= len(self._ocr_words):
             return
-        rects = [r for r in self._ocr_regions if r[4] == index]
-        if not rects:
+        entry = self._ocr_tokens.get(index)
+        if entry is None:
             return
-        # Union of the token's characters, so the popup can be anchored to the
-        # whole word rather than to whichever character was under the cursor.
-        x0 = min(r[0] for r in rects)
-        y0 = min(r[1] for r in rects)
-        x1 = max(r[0] + r[2] for r in rects)
-        y1 = max(r[1] + r[3] for r in rects)
+        x0, y0, tw, th = entry[0]
+        x1, y1 = x0 + tw, y0 + th
         word = self._ocr_words[index]
         lemma = word.get('lemma') or word.get('surface', '')
         # Unconditional: hover only fires when the token changes, so this is
         # human-paced, and it is the only signal that the chain is alive.
         print(f"ocr hover: [{index}] {word.get('surface','')} -> {lemma} "
               f"rect=({x0},{y0} {x1 - x0}x{y1 - y0})")
+        try:
+            patch = self._glyph_patch(index)
+        except Exception as e:
+            print("glyph patch failed:", e)
+            patch = None
+        if patch:
+            self._layershell.set_highlight(*patch)
+        else:
+            self._layershell.clear_highlight()
         self.ocrHovered.emit(index, x0, y0, x1 - x0, y1 - y0, lemma)
 
     def _get_overlay_active(self):
@@ -481,7 +676,7 @@ class Bridge(QObject):
             return
         ls = self._ls()
         self._overlay_active = on
-        self._ocr_hover_last = -1
+        self._reset_hover()
         if on:
             # Surface first: set_regions is a no-op until one exists. Regions
             # may be empty if no scan has landed yet, which is harmless -- an
@@ -489,7 +684,10 @@ class Bridge(QObject):
             ls.show()
             ls.set_debug_boxes(self._ocr_debug)
             ls.set_regions(self._ocr_regions)
+            # A scan may have landed before the overlay came up.
+            self.ocrBoundsChanged.emit(*self._ocr_bounds)
         else:
+            ls.clear_highlight()
             ls.set_regions([])
             ls.hide()
             self.ocrHoverEnded.emit()
@@ -502,9 +700,12 @@ class Bridge(QObject):
             self.set_overlay_active(False)
             return
         if self._ocr is None or not self._ocr._running:
-            # Region select blocks in its own thread; the surface goes up now
-            # and fills in when the first scan lands.
+            # Region select blocks in its own thread. Defer rather than going
+            # up straight away, or the dot floats over the screen while slurp
+            # is still waiting for a rectangle to be dragged out.
+            self._pending_overlay = True
             self.toggle_ocr()
+            return
         self.set_overlay_active(True)
 
     @Slot(bool)

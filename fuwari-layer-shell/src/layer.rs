@@ -75,6 +75,10 @@ pub struct OverlayState {
     /// Index of the region under the pointer, so a move within one region
     /// doesn't re-fire and a lookup isn't repeated per pixel.
     hovered: Option<usize>,
+    /// Recoloured pixels for the hovered token: (x, y, w, h, premultiplied
+    /// ARGB). Sampled from the captured frame by the caller, so it lines up
+    /// with the glyphs underneath exactly.
+    highlight: Option<(i32, i32, i32, i32, Vec<u8>)>,
     /// Development aid only; see Command::SetDebugBoxes.
     debug_boxes: bool,
     debug_color: (u8, u8, u8),
@@ -411,6 +415,25 @@ impl OverlayState {
         surface.commit();
     }
 
+    pub fn set_highlight(&mut self, x: i32, y: i32, width: i32, height: i32, data: Vec<u8>) {
+        if width <= 0 || height <= 0 || data.len() < (width as usize * height as usize * 4) {
+            self.highlight = None;
+        } else {
+            self.highlight = Some((x, y, width, height, data));
+        }
+        let qh = self.qh.clone();
+        self.draw(&qh);
+    }
+
+    pub fn clear_highlight(&mut self) {
+        if self.highlight.is_none() {
+            return;
+        }
+        self.highlight = None;
+        let qh = self.qh.clone();
+        self.draw(&qh);
+    }
+
     pub fn set_debug_boxes(&mut self, on: bool, rgb: u32) {
         self.debug_boxes = on;
         self.debug_color = (
@@ -470,6 +493,35 @@ impl OverlayState {
                 for y in y0..y1 {
                     put_px(canvas, width, x0, y, color);
                     put_px(canvas, width, x1 - 1, y, color);
+                }
+            }
+        }
+
+        if let Some((hx, hy, hw, hh, data)) = &self.highlight {
+            // Straight copy: the patch is already premultiplied ARGB and
+            // already masked to the glyph, so transparent pixels are skipped
+            // rather than punching holes in what is underneath.
+            for row in 0..*hh {
+                let dy = hy + row;
+                if dy < 0 || dy >= height as i32 {
+                    continue;
+                }
+                for col in 0..*hw {
+                    let dx = hx + col;
+                    if dx < 0 || dx >= width as i32 {
+                        continue;
+                    }
+                    let src = ((row * *hw + col) * 4) as usize;
+                    if data[src + 3] == 0 {
+                        continue;
+                    }
+                    let dst = (dy as usize * width as usize + dx as usize) * 4;
+                    if dst + 3 < canvas.len() {
+                        canvas[dst] = data[src];
+                        canvas[dst + 1] = data[src + 1];
+                        canvas[dst + 2] = data[src + 2];
+                        canvas[dst + 3] = data[src + 3];
+                    }
                 }
             }
         }
@@ -838,6 +890,7 @@ pub fn new(
         evt_tx: Some(evt_tx),
         regions: Vec::new(),
         hovered: None,
+        highlight: None,
         debug_boxes: false,
         debug_color: (0, 255, 0),
         shm,

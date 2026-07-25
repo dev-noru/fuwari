@@ -36,6 +36,11 @@ pub enum Command {
     /// underneath. Development aid: the overlay draws nothing when this is off.
     /// rgb is 0x00RRGGBB.
     SetDebugBoxes { on: bool, rgb: u32 },
+    /// Premultiplied ARGB8888 patch to paint over the hovered token, in
+    /// surface-local logical pixels. The caller has already masked it to the
+    /// glyph shape, so most of it is transparent.
+    SetHighlight { x: i32, y: i32, width: i32, height: i32, data: Vec<u8> },
+    ClearHighlight,
     Shutdown,
 }
 
