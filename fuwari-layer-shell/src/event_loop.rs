@@ -69,6 +69,9 @@ pub fn start() -> (
                         } => state.set_drag_style(rgb, border, radius, fill_pct),
                         Command::StopDrag => state.stop_drag(),
                         Command::SetDebugBoxes { on, rgb } => state.set_debug_boxes(on, rgb),
+                        Command::SetHighlight { x, y, width, height, data } =>
+                            state.set_highlight(x, y, width, height, data),
+                        Command::ClearHighlight => state.clear_highlight(),
                         Command::Shutdown => state.request_exit(),
                         _ => {}
                     }
