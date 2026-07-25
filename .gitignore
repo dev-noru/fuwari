@@ -27,6 +27,7 @@ squashfs-root/
 *.AppImage-*
 appimagetool-*.AppImage
 python3.11*-manylinux2014_x86_64.AppImage
+capture_leak_test.py
 
 # UniDic cache (if you ever place it locally)
 .unidic_cache/

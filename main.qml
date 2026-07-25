@@ -264,8 +264,11 @@ Window {
   // Fills the popup from a lookup, returning false when there is nothing to
   // show. Shared by the word strip and the overlay, which differ only in where
   // they then place it.
-  function fillDefinition(term) {
-    var res = bridge.lookup(term)
+  // token >= 0 uses the part-of-speech aware lookup; a string falls back to
+  // the plain one, which is what a text selection needs.
+  function fillDefinition(token) {
+    var res = (typeof token === "number") ? bridge.lookup_token(token)
+                                          : bridge.lookup(token)
     if (res === "")
       return false
     var results = JSON.parse(res)
@@ -278,8 +281,8 @@ Window {
     return true
   }
 
-  function showOverlayLookup(x, y, w, h, term) {
-    if (!mainWindow.fillDefinition(term)) {
+  function showOverlayLookup(x, y, w, h, token) {
+    if (!mainWindow.fillDefinition(token)) {
       hideTimer.restart()
       return
     }
@@ -402,7 +405,7 @@ Window {
       }
     }
     function onOcrHovered(index, x, y, w, h, lemma) {
-      mainWindow.showOverlayLookup(x, y, w, h, lemma)
+      mainWindow.showOverlayLookup(x, y, w, h, index)
     }
     function onOcrHoverEnded() {
       // Hover intent delays this by HOVER_DWELL, so by the time it arrives the
