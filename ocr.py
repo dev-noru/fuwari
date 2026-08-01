@@ -9,6 +9,13 @@ from dataclasses import dataclass
 SCAN_INTERVAL = 0.5
 SIMILARITY_THRESHOLD = 0.9
 
+# Frame gate. Recognising text costs ~90ms; comparing two frames costs ~0.4ms,
+# so checking whether anything moved before running OCR is around 200x cheaper
+# than running it and discovering nothing changed. While you are reading a
+# line the screen is still, which is most scans.
+GATE_WIDTH = 160          # thumbnail width the comparison runs on
+GATE_EPSILON = 0.35       # mean 0-255 difference below this counts as unchanged
+
 # A box narrower or shorter than this can't be hovered, and the character it
 # claims to hold shifts every offset after it. Drop them.
 MIN_CHAR_SIDE = 4
@@ -154,7 +161,8 @@ class OCRThread:
         self._pipeline = None
         self._last_fired = ""
         self._last_regions = []
-        self._last_chars = []
+        self._last_blocks = []
+        self._last_sig = None
 
     def start(self):
         self._pipeline = _get_pipeline()
@@ -168,6 +176,18 @@ class OCRThread:
 
     def set_region(self, region_str):
         self._region = region_str
+
+    @staticmethod
+    def _signature(img):
+        """Small greyscale thumbnail, cheap enough to compute every scan.
+
+        Subsampled rather than resampled: no interpolation, just a stride, so
+        the cost is a memory read. Coarse enough that a blinking cursor or a
+        dithered gradient does not register, fine enough that a line of text
+        appearing or changing does.
+        """
+        step = max(1, img.shape[1] // GATE_WIDTH)
+        return img[::step, ::step].mean(axis=2)
 
     def _capture(self):
         if not self._region:
@@ -198,20 +218,32 @@ class OCRThread:
         return sorted(regions, key=lambda r: (r.box[1], r.box[0]))
 
     @staticmethod
-    def _flatten(ordered):
-        """Sentence plus the box behind each of its characters.
+    def _blocks(ordered):
+        """One (text, chars) pair per detected block, kept apart.
 
-        Built from the character boxes rather than from block text, so
-        sentence[i] and chars[i] refer to the same glyph by construction. Any
-        token offset computed on the sentence indexes straight into chars.
+        The lines of a dialogue box belong to one sentence and are already a
+        single block. Separate blocks are separate things -- a menu's アイテム
+        and そうび are not a phrase -- so concatenating them would invent word
+        boundaries that do not exist and produce a mined sentence containing
+        the entire screen.
+
+        Text is built from the character boxes rather than the block's own
+        string, so text[i] and chars[i] are the same glyph by construction.
         """
-        chars = []
+        out = []
         for region in ordered:
-            chars.extend(region.chars or [])
-        return ''.join(c.char for c in chars), chars
+            chars = region.chars or []
+            if chars:
+                out.append((''.join(c.char for c in chars), chars))
+        return out
+
+    @staticmethod
+    def _joined(blocks):
+        """What the word strip shows: blocks on their own lines."""
+        return '\n'.join(text for text, _ in blocks)
 
     def _to_sentence(self, regions):
-        return self._flatten(self._order_regions(regions))[0]
+        return self._joined(self._blocks(self._order_regions(regions)))
 
     def _loop(self):
         last_text = ""
@@ -225,11 +257,33 @@ class OCRThread:
                 if img is None:
                     time.sleep(SCAN_INTERVAL)
                     continue
+
+                sig = self._signature(img)
+                if (self._last_sig is not None
+                        and abs(sig - self._last_sig).mean() < GATE_EPSILON):
+                    # Identical pixels, so the text cannot have changed. That
+                    # is a stronger guarantee than re-running OCR and
+                    # comparing the strings, and it counts toward stability
+                    # without paying for the recognition.
+                    if last_text:
+                        stable_count += 1
+                        if stable_count == 2 and last_text != self._last_fired:
+                            self._last_fired = last_text
+                            self._callback(last_text)
+                            if self._on_geometry:
+                                self._on_geometry(self._last_blocks,
+                                                  self._capture_origin,
+                                                  self._capture_logical, img)
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+                self._last_sig = sig
+
                 regions = self._pipeline.process(img)
                 ordered = self._order_regions(regions)
-                text, chars = self._flatten(ordered)
+                blocks = self._blocks(ordered)
+                text = self._joined(blocks)
                 self._last_regions = ordered
-                self._last_chars = chars
+                self._last_blocks = blocks
                 if not text:
                     stable_count = 0
                     last_text = ""
@@ -245,7 +299,7 @@ class OCRThread:
                     self._last_fired = text
                     self._callback(text)
                     if self._on_geometry:
-                        self._on_geometry(chars, self._capture_origin,
+                        self._on_geometry(blocks, self._capture_origin,
                                           self._capture_logical, img)
             except Exception as e:
                 print(f"OCR error: {e}")

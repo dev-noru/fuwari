@@ -298,11 +298,17 @@ impl PointerHandler for OverlayState {
                             let y = sy.min(ey) as i32;
                             let w = (sx - ex).abs() as i32;
                             let h = (sy - ey).abs() as i32;
-                            if w > 4 && h > 4 {
-                                let region_str = format!("{},{} {}x{}", x, y, w, h);
-                                if let Some(tx) = &self.evt_tx {
-                                    tx.send(crate::types::Event::RegionSelected(region_str)).ok();
-                                }
+                            // A drag scopes the capture to a box. A click
+                            // without a drag takes the whole screen, which is
+                            // what menus and scattered UI text need -- they
+                            // are not in one place to draw a box around.
+                            let region_str = if w > 4 && h > 4 {
+                                format!("{},{} {}x{}", x, y, w, h)
+                            } else {
+                                format!("0,0 {}x{}", self.width, self.height)
+                            };
+                            if let Some(tx) = &self.evt_tx {
+                                tx.send(crate::types::Event::RegionSelected(region_str)).ok();
                             }
                         }
                         self.stop_region_select();
