@@ -84,6 +84,23 @@ GLYPH_INK_PCT = 98         # percentile treated as solid ink
 GLYPH_SAT_MAX = 0.45       # more colourful than this is scenery, not text
 
 
+def _is_japanese(text):
+    """Whether a block is worth treating as game text.
+
+    A whole-screen capture picks up the panel clock, window titles, browser
+    tabs and whatever else is on screen. Requiring at least one kana or kanji
+    removes nearly all of it. It also drops all-Latin game text, which is rare
+    enough in Japanese games to be worth the trade.
+    """
+    for ch in text:
+        o = ord(ch)
+        if (0x3040 <= o <= 0x30FF        # hiragana, katakana
+                or 0x4E00 <= o <= 0x9FFF  # kanji
+                or 0x3400 <= o <= 0x4DBF):
+            return True
+    return False
+
+
 def _grow(acc, key, x0, y0, x1, y1):
     """Accumulate a bounding box per key."""
     b = acc.get(key)
@@ -153,6 +170,7 @@ class Bridge(QObject):
         self._ocr_frame = None
         # token index -> (rect on screen, rect in the captured frame)
         self._ocr_tokens = {}
+        self._ocr_token_block = {}
         self._ocr_scale = (1.0, 1.0)
         self._ocr_origin = (0, 0)
         self._highlight_rgb = (255, 190, 60)
@@ -412,7 +430,7 @@ class Bridge(QObject):
 
         threading.Thread(target=start_ocr, daemon=True).start()
 
-    def _on_ocr_geometry(self, chars, origin, logical, image):
+    def _on_ocr_geometry(self, blocks, origin, logical, image):
         """Put character boxes back on the screen as overlay input regions.
 
         Called on the OCR thread. Boxes arrive in capture-image physical
@@ -422,7 +440,7 @@ class Bridge(QObject):
         gives us the scale, without having to be told it.
         """
         ls = self._ls()
-        if not chars or image is None:
+        if not blocks or image is None:
             ls.set_regions([])
             return
 
@@ -436,31 +454,47 @@ class Bridge(QObject):
         sy = phys_h / req_h
         ox, oy = origin
 
-        # Character position -> token index, so every character of a word
-        # carries the same region index and hovering anywhere in it is one
-        # event rather than one per character.
-        words = list(self._words)
-        token_of = [-1] * len(chars)
-        for ti, w in enumerate(words):
-            for i in range(max(0, w['start']), min(w['end'], len(chars))):
-                token_of[i] = ti
-
+        # Each block is tokenized on its own. Token indices run globally so a
+        # hover still resolves with one number, but a word can never straddle
+        # two blocks -- which is what would otherwise let a menu's アイテム and
+        # そうび merge into a word that was never on screen.
         regions = []
         phys = {}
-        for i, c in enumerate(chars):
-            ti = token_of[i]
-            # A character the tokenizer didn't cover has no word to look up.
-            if ti < 0:
+        words = []
+        blocks = [b for b in blocks if _is_japanese(b[0])]
+        if not blocks:
+            ls.set_regions([])
+            return
+        # Which block each token came from, so the popup can clear that block
+        # rather than the whole screen -- which matters once the capture is a
+        # whole screen rather than one textbox.
+        block_of = {}
+        for text, chars in blocks:
+            if not text:
                 continue
-            bx, by, bw, bh = c.box
-            regions.append((
-                round(ox + bx / sx),
-                round(oy + by / sy),
-                max(1, round(bw / sx)),
-                max(1, round(bh / sy)),
-                ti,
-            ))
-            _grow(phys, ti, bx, by, bx + bw, by + bh)
+            base = len(words)
+            block_tokens = tokenize(text)
+            token_of = [-1] * len(chars)
+            for j, w in enumerate(block_tokens):
+                for i in range(max(0, w['start']), min(w['end'], len(chars))):
+                    token_of[i] = base + j
+            words.extend(block_tokens)
+            block_id = len(block_of)
+            for i, c in enumerate(chars):
+                ti = token_of[i]
+                # A character the tokenizer didn't cover has no word to look up.
+                if ti < 0:
+                    continue
+                bx, by, bw, bh = c.box
+                regions.append((
+                    round(ox + bx / sx),
+                    round(oy + by / sy),
+                    max(1, round(bw / sx)),
+                    max(1, round(bh / sy)),
+                    ti,
+                ))
+                _grow(phys, ti, bx, by, bx + bw, by + bh)
+                block_of[ti] = block_id
 
         regions = self._close_gaps(regions)
 
@@ -468,11 +502,19 @@ class Bridge(QObject):
         # screen, and where to sample it from in the captured frame. Hovering
         # is then a dictionary lookup instead of a scan over every character.
         logical = {}
+        blocks_box = {}
         for x, y, w, h, ti in regions:
             _grow(logical, ti, x, y, x + w, y + h)
+            if ti in block_of:
+                _grow(blocks_box, block_of[ti], x, y, x + w, y + h)
         self._ocr_tokens = {
             ti: (_rect(box), _rect(phys[ti]))
             for ti, box in logical.items() if ti in phys
+        }
+        # token -> the bounds of the block it belongs to
+        self._ocr_token_block = {
+            ti: _rect(blocks_box[bid]) for ti, bid in block_of.items()
+            if bid in blocks_box
         }
 
         self._ocr_regions = regions
@@ -640,6 +682,12 @@ class Bridge(QObject):
             return
         x0, y0, tw, th = entry[0]
         x1, y1 = x0 + tw, y0 + th
+        # Re-aim the popup at the block this word belongs to. With a whole
+        # screen captured, clearing every block at once would leave nowhere
+        # to put it.
+        blk = self._ocr_token_block.get(index)
+        if blk:
+            self.ocrBoundsChanged.emit(*blk)
         word = self._ocr_words[index]
         lemma = word.get('lemma') or word.get('surface', '')
         # Unconditional: hover only fires when the token changes, so this is
