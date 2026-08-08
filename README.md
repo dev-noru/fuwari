@@ -68,7 +68,12 @@ this, add the appropriate window rule for your compositor below:
 
 Add the below to either your `hyprland.conf` or `windowrules.conf`:
 ```ini
-windowrule = float, class:^(fuwari)$
+hl.window_rule({
+  match = {
+    class = "fuwari"
+  },
+  float = true,
+})
 ```
 
 **niri**
