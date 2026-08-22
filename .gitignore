@@ -43,6 +43,8 @@ capture_leak_test.py
 
 # Other archives
 *.arc
+heaptrack.*.zst
+leak_test*.py
 
 # (Optional) keep the build script and source files
 # build-appimage.sh, *.py, *.qml, requirements.txt, fuwari.desktop, fuwari.png are tracked
