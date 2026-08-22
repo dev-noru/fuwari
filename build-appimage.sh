@@ -48,6 +48,8 @@ fi
 # ── 4. Fuwari source + native layer-shell .so ────────────────────────
 install -d "$APPDIR/opt/fuwari"
 cp "$SRC"/*.py "$SRC"/*.qml "$APPDIR/opt/fuwari/"
+# development-only helpers, not part of the app
+rm -f "$APPDIR/opt/fuwari/ocr_boxtest.py" "$APPDIR/opt/fuwari/ocr_cost_test.py"
 
 # build the release .so and bundle it at the path layer_shell.py expects
 echo "Building layer-shell crate (release)..."
@@ -55,12 +57,21 @@ echo "Building layer-shell crate (release)..."
 install -d "$APPDIR/opt/fuwari/fuwari-layer-shell/target/release"
 cp "$SRC/fuwari-layer-shell/target/release/libfuwari_layer_shell.so" \
    "$APPDIR/opt/fuwari/fuwari-layer-shell/target/release/"
+# layer_shell.py CDLLs this path at import, so a miss is a hard crash on start
+[ -f "$APPDIR/opt/fuwari/fuwari-layer-shell/target/release/libfuwari_layer_shell.so" ] \
+  || { echo "ERROR: libfuwari_layer_shell.so did not land in the AppDir"; exit 1; }
 
 # ── 5. wl-paste (clipboard texthook; SteamOS may not ship wl-clipboard) ──
 cp "$(command -v wl-paste)" "$APPDIR/usr/bin/" 2>/dev/null || echo "WARN: wl-paste not bundled"
 
 # ── 6. KDE LayerShell (QML module + Wayland shell integration plugin) ──
-if [ "$BUNDLE_LAYERSHELL" = true ] && [ -d /usr/lib/qt6/qml/org/kde/layershell ]; then
+if [ "$BUNDLE_LAYERSHELL" = true ]; then
+  # Fail loudly. Skipping this silently produces an AppImage where every
+  # window falls back to an ordinary toplevel -- indistinguishable from the
+  # legacy_windows setting being on, so the resulting bug reports blame the
+  # setting rather than the build.
+  [ -d /usr/lib/qt6/qml/org/kde/layershell ] \
+    || { echo "ERROR: /usr/lib/qt6/qml/org/kde/layershell missing (pacman: layer-shell-qt)"; exit 1; }
   echo "Bundling KDE LayerShell..."
   KDE_QML="$("$PYBIN" -c 'import PySide6,os;print(os.path.join(os.path.dirname(PySide6.__file__),"Qt","qml","org","kde"))')"
   QT_LIB="$("$PYBIN" -c 'import PySide6,os;print(os.path.join(os.path.dirname(PySide6.__file__),"Qt","lib"))')"
@@ -90,6 +101,21 @@ if [ "$BUNDLE_LAYERSHELL" = true ] && [ -d /usr/lib/qt6/qml/org/kde/layershell ]
   done
 fi
 
+# ── 6b. drop libraries that must come from the host ──────────────────
+# AppRun puts the bundle's usr/lib first on LD_LIBRARY_PATH while also pointing
+# QT_PLUGIN_PATH at the host's Qt plugins, so the user's theme still applies.
+# That mix breaks whenever the bundle ships an OLDER copy of a library a host
+# plugin needs. The manylinux2014 base carries CentOS 7-era liblzma, so loading
+# the host's libqt6ct.so fails with "version `XZ_5.4' not found" and Qt silently
+# falls back to its default light palette -- no error, just the wrong theme.
+#
+# These are on the standard AppImage excludelist for exactly this reason: they
+# exist on every target system and must never be shadowed by the bundle.
+echo "Removing host-provided libraries from the bundle..."
+for pat in 'liblzma.so*' 'libbz2.so*' 'libselinux.so*'; do
+  find "$APPDIR" -name "$pat" -print -delete 2>/dev/null || true
+done
+
 # ── 7. AppRun ────────────────────────────────────────────────────────
 rm -f "$APPDIR/AppRun"
 cat > "$APPDIR/AppRun" <<'EOF'
@@ -116,6 +142,26 @@ if [ -z "${QT_QPA_PLATFORMTHEME:-}" ]; then
   elif [ -f /usr/lib/qt6/plugins/platformthemes/libqgtk3.so ]; then
     export QT_QPA_PLATFORMTHEME=gtk3
   fi
+fi
+# The palette comes from the platform theme. With none, Qt uses its built-in
+# light default regardless of what the desktop is set to, which is why an
+# AppImage can look light while a source run looks dark.
+if [ -z "${QT_QPA_PLATFORMTHEME:-}" ]; then
+  echo "fuwari: no Qt platform theme found; using Qt's default (light) palette." >&2
+  echo "        Set QT_QPA_PLATFORMTHEME=qt6ct (or kde, gtk3) to match your desktop." >&2
+fi
+# Qt Quick Controls styles such as Breeze live in the host's QML path, which the
+# bundled Qt does not search -- so a style the source run picks up is missing
+# here and Controls fall back to their plain default. Opt-in, because loading
+# host QML into a bundled Qt can mismatch across Qt versions.
+if [ -n "${FUWARI_HOST_QML:-}" ] && [ -d /usr/lib/qt6/qml ]; then
+  export QML2_IMPORT_PATH="/usr/lib/qt6/qml:${QML2_IMPORT_PATH:-}"
+  export QML_IMPORT_PATH="/usr/lib/qt6/qml:${QML_IMPORT_PATH:-}"
+fi
+if [ -n "${FUWARI_DEBUG_THEME:-}" ]; then
+  echo "fuwari: platformtheme=${QT_QPA_PLATFORMTHEME:-<none>}" >&2
+  echo "fuwari: controls style=${QT_QUICK_CONTROLS_STYLE:-<default>}" >&2
+  echo "fuwari: qml path=${QML2_IMPORT_PATH:-<bundled only>}" >&2
 fi
 export QT_QML_APPLICATION_ICON="$HERE/fuwari.png"
 cd "$HERE/opt/fuwari" || { echo "source missing"; exit 1; }
