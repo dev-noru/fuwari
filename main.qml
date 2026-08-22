@@ -17,6 +17,7 @@ Window {
   visible: false
 
   Component.onCompleted: {
+    mainWindow.applyLayerShell()
     // Deliberately NOT announcing the output here: the Screen attached
     // property is not valid until the window has been shown, and the window is
     // mapped from main.py, so this would name the wrong monitor. main.py
@@ -73,20 +74,31 @@ Window {
   property int ghostRadius: 12
   property int ghostFillPct: 14
 
-  LayerShell.Window.layer: LayerShell.Window.LayerOverlay
-  // The monitor named by the startup_output setting, or null for "compositor
-  // decides". Set here rather than from main.py because layer-shell-qt reads
-  // this when the surface is created and only falls back to QWindow::screen()
-  // if it is null -- and by the time Python can call setScreen() the surface
-  // may already exist, leaving the window visible on one monitor while every
-  // coordinate is measured against another.
-  LayerShell.Window.screen: bridge ? bridge.startupScreen : null
-  LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
-  LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
-  LayerShell.Window.margins: Qt.rect(mainWindow.posX, mainWindow.posY, 0, 0)
-  // Measure margins from the output edge rather than the usable area, so these
-  // coordinates share an origin with the crate's overlay.
-  LayerShell.Window.exclusionZone: -1
+  readonly property bool legacy: bridge ? bridge.legacyWindows : false
+
+  // Layer-shell settings are applied here rather than declared as properties,
+  // because merely writing one is what turns the window into a layer surface --
+  // there is no value meaning "off". Skipping them leaves an ordinary window
+  // that the window manager positions and moves, which is what legacy mode is.
+  //
+  // Must run before the surface exists; main.py maps the window after loading.
+  function applyLayerShell() {
+    if (mainWindow.legacy) return
+    LayerShell.Window.layer = LayerShell.Window.LayerOverlay
+    // The monitor named by startup_output, or null for "compositor decides".
+    // layer-shell-qt reads this when the surface is created and only falls back
+    // to QWindow::screen() if it is null.
+    LayerShell.Window.screen = bridge ? bridge.startupScreen : null
+    LayerShell.Window.anchors = LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
+    LayerShell.Window.keyboardInteractivity = LayerShell.Window.KeyboardInteractivityNone
+    // Measure margins from the output edge rather than the usable area, so
+    // these coordinates share an origin with the crate's overlay.
+    LayerShell.Window.exclusionZone = -1
+  }
+
+  // Margins are double-buffered and must be re-applied whenever we move.
+  onPosXChanged: if (!mainWindow.legacy) LayerShell.Window.margins = Qt.rect(mainWindow.posX, mainWindow.posY, 0, 0)
+  onPosYChanged: if (!mainWindow.legacy) LayerShell.Window.margins = Qt.rect(mainWindow.posX, mainWindow.posY, 0, 0)
 
   property bool ocrActive: false
   readonly property bool overlayActive: bridge ? bridge.overlayActive : false
@@ -124,6 +136,12 @@ Window {
       // drag to the crate, which owns a stationary full-screen overlay and
       // therefore sees real screen coordinates.
       onPressed: (mouse) => {
+        // Legacy mode: the window manager owns the window, so ask it to move
+        // it. No ghost, no coordinate maths, no crate involvement.
+        if (mainWindow.legacy) {
+          mainWindow.startSystemMove()
+          return
+        }
         if (mainWindow.dragging) return
         mainWindow.dragging = true
         var s = mainWindow.dragScale
@@ -360,6 +378,12 @@ Window {
       // Never hide something the pointer is sitting on. onPopupHoveredChanged
       // restarts this once the pointer actually leaves.
       if (definitionWindow.popupHovered)
+        return
+      // In legacy mode the compositor places the popup beside the main window
+      // rather than under the cursor, so the pointer cannot reach it within
+      // the timeout and it would close before it could be read or scrolled.
+      // It stays up instead until the next lookup replaces it.
+      if (mainWindow.legacy)
         return
       definitionWindow.visible = false
     }

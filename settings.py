@@ -22,7 +22,14 @@ DEFAULT_SETTINGS = {
     # interacted with. Wayland gives a client no way to find the pointer's
     # monitor itself, so on a multi-monitor setup this is the only way to make
     # the choice deterministic.
-    'startup_output': ''
+    'startup_output': '',
+    # Use ordinary windows instead of layer-shell surfaces. Layer-shell floats
+    # above fullscreen games, which is the point of Fuwari, but it also means
+    # the app positions itself and the window manager cannot: dragging, monitor
+    # placement and popup positioning all become Fuwari's problem. Turning this
+    # on gives up floating-above-fullscreen and hands all of that back to the
+    # WM, which is how the app behaved before layer-shell was introduced.
+    'legacy_windows': False
 }
 
 def load_settings():

@@ -11,6 +11,7 @@ Item {
     // "" means no preference: layer-shell passes a null output and the
     // compositor picks, generally the display last interacted with.
     property string startupOutput: ""
+    property bool legacyWindows: false
 
     function load() {
         var s = JSON.parse(bridge.get_settings())
@@ -19,6 +20,8 @@ Item {
         lunaUrl = s.lunatranslator_ws_url || "ws://localhost:2333/api/ws/text/origin"
         sourceCombo.currentIndex = ["clipboard", "textractor", "lunatranslator"].indexOf(textSource)
 
+        legacyWindows = s.legacy_windows === true
+        legacyCheck.checked = legacyWindows
         startupOutput = s.startup_output || ""
         var outputs = [""].concat(bridge.available_outputs())
         outputCombo.model = outputs
@@ -54,10 +57,32 @@ Item {
             background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
         }
 
-        Text { text: "Open on monitor"; color: palette.windowText }
+        CheckBox {
+            id: legacyCheck
+            text: "Use ordinary windows (no layer-shell)"
+            onCheckedChanged: legacyWindows = checked
+            contentItem: Text {
+                text: legacyCheck.text
+                color: palette.windowText
+                leftPadding: legacyCheck.indicator.width + 6
+                verticalAlignment: Text.AlignVCenter
+            }
+        }
+        Text {
+            text: "The window manager handles moving and placing Fuwari, as it " +
+                  "did before layer-shell. Fuwari will no longer float above " +
+                  "fullscreen games. Takes effect on restart."
+            color: palette.mid
+            wrapMode: Text.WordWrap
+            width: parent.width
+            font.pixelSize: 11
+        }
+
+        Text { text: "Open on monitor"; color: palette.windowText; visible: !legacyWindows }
         ComboBox {
             id: outputCombo
             width: parent.width
+            visible: !legacyWindows
             model: [""]
             // Blank reads as automatic; the raw "" would look like a glitch.
             displayText: currentText === "" ? "Automatic (compositor decides)" : currentText
@@ -107,6 +132,7 @@ Item {
                 s.textractor_ws_url = textractorUrl
                 s.lunatranslator_ws_url = lunaUrl
                 s.startup_output = startupOutput
+                s.legacy_windows = legacyWindows
                 bridge.save_settings_slot(JSON.stringify(s))
                 saved = true
             }

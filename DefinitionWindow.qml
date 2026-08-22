@@ -14,7 +14,12 @@ Window {
     minimumWidth: 150
     visible: false
     color: palette.base
-    transientParent: null
+    // Layer-shell surfaces cannot be transients, so this must be null there.
+    // In legacy mode the opposite is true: being a child of the main window is
+    // the only way a plain Wayland window gets placed anywhere sensible -- the
+    // compositor puts it beside its parent, which is how the popup behaved
+    // before layer-shell was introduced.
+    transientParent: (bridge && bridge.legacyWindows) ? mainWindow : null
     property var currentResults: []
     property string word: ""
     property string reading: ""
@@ -24,16 +29,46 @@ Window {
     property int posX: 0
     property int posY: 0
 
-    LayerShell.Window.layer: LayerShell.Window.LayerOverlay
-    // Same monitor as the main window. Without this the surface falls back to
-    // QWindow::screen(), which is whatever Qt assigned -- not where
-    // layer-shell actually put the main window -- so the popup opens on a
-    // different monitor than the window it belongs to.
-    LayerShell.Window.screen: bridge ? bridge.startupScreen : null
-    LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
-    LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
-    LayerShell.Window.margins: Qt.rect(root.posX, root.posY, 0, 0)
-    LayerShell.Window.exclusionZone: -1
+    // Report this window's footprint to the OCR loop. It is drawn over the
+    // captured region, so without this its pixels trip the change gate and its
+    // own definitions get recognised as game text. Sizes are Qt pixels, scaled
+    // to compositor pixels to match the space the OCR region lives in.
+    function _reportMask() {
+        if (!bridge) return
+        if (!visible) { bridge.set_popup_mask(0, 0, 0, 0); return }
+        var s = mainWindow.dragScale
+        bridge.set_popup_mask(root.posX, root.posY,
+                              Math.round(root.width * s),
+                              Math.round(root.height * s))
+    }
+    readonly property bool legacy: bridge ? bridge.legacyWindows : false
+
+    // Margins are double-buffered and only apply on the next frame, so they
+    // are re-sent on every move. Merged with the mask report because QML
+    // allows only one handler per signal.
+    function _moved() {
+        if (!root.legacy)
+            LayerShell.Window.margins = Qt.rect(root.posX, root.posY, 0, 0)
+        _reportMask()
+    }
+
+    onVisibleChanged: _reportMask()
+    onWidthChanged: _reportMask()
+    onHeightChanged: _reportMask()
+    onPosXChanged: _moved()
+    onPosYChanged: _moved()
+
+    // Applied rather than declared: writing any LayerShell property is what
+    // makes this a layer surface, and there is no value meaning "off". In
+    // legacy mode the popup is an ordinary window the WM places.
+    Component.onCompleted: {
+        if (root.legacy) return
+        LayerShell.Window.layer = LayerShell.Window.LayerOverlay
+        LayerShell.Window.screen = bridge ? bridge.startupScreen : null
+        LayerShell.Window.anchors = LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
+        LayerShell.Window.keyboardInteractivity = LayerShell.Window.KeyboardInteractivityNone
+        LayerShell.Window.exclusionZone = -1
+    }
 
     x: root.posX
     y: root.posY

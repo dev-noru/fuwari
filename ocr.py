@@ -156,6 +156,11 @@ class OCRThread:
         self._on_geometry = on_geometry
         self._layershell = layershell
         self._running = False
+        # Set while Fuwari's own popup is on screen. The popup is drawn over
+        # the captured area, so its pixels change the frame, which trips the
+        # change gate and runs full recognition -- on the popup's own text.
+        # Hovering words then costs a recognition pass each time.
+        self._paused = False
         self._thread = None
         self._region = None
         self._pipeline = None
@@ -169,6 +174,9 @@ class OCRThread:
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+
+    def set_paused(self, paused):
+        self._paused = bool(paused)
 
     def stop(self):
         self._running = False
@@ -265,7 +273,7 @@ class OCRThread:
         stable_count = 0
         while self._running:
             try:
-                if not self._region:
+                if self._paused or not self._region:
                     time.sleep(SCAN_INTERVAL)
                     continue
                 img = self._capture()

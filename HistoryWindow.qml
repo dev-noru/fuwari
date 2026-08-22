@@ -16,16 +16,22 @@ Window {
     property int posX: 0
     property int posY: 0
 
-    LayerShell.Window.layer: LayerShell.Window.LayerOverlay
-    // Same monitor as the main window. Without this the surface falls back to
-    // QWindow::screen(), which is whatever Qt assigned -- not where
-    // layer-shell actually put the main window -- so the popup opens on a
-    // different monitor than the window it belongs to.
-    LayerShell.Window.screen: bridge ? bridge.startupScreen : null
-    LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
-    LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
-    LayerShell.Window.margins: Qt.rect(root.posX, root.posY, 0, 0)
-    LayerShell.Window.exclusionZone: -1
+    readonly property bool legacy: bridge ? bridge.legacyWindows : false
+
+    // Applied rather than declared: writing any LayerShell property is what
+    // makes this a layer surface, and there is no value meaning "off". In
+    // legacy mode the history window is an ordinary window the WM places.
+    Component.onCompleted: {
+        if (root.legacy) return
+        LayerShell.Window.layer = LayerShell.Window.LayerOverlay
+        LayerShell.Window.screen = bridge ? bridge.startupScreen : null
+        LayerShell.Window.anchors = LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
+        LayerShell.Window.keyboardInteractivity = LayerShell.Window.KeyboardInteractivityNone
+        LayerShell.Window.exclusionZone = -1
+    }
+
+    onPosXChanged: if (!root.legacy) LayerShell.Window.margins = Qt.rect(root.posX, root.posY, 0, 0)
+    onPosYChanged: if (!root.legacy) LayerShell.Window.margins = Qt.rect(root.posX, root.posY, 0, 0)
 
     x: root.posX
     y: root.posY

@@ -342,6 +342,18 @@ class Bridge(QObject):
         p = QCursor.pos()
         return [p.x(), p.y()]
 
+    @Slot(int, int, int, int)
+    def set_popup_mask(self, x, y, w, h):
+        """Tell the OCR loop where the definition popup is, so it can ignore it.
+
+        Coordinates are output-local compositor pixels, the same space the OCR
+        region was selected in. Pass a zero width or height to clear it.
+        """
+        ocr = self._ocr
+        if ocr is None:
+            return
+        ocr.set_mask((x, y, w, h) if w > 0 and h > 0 else None)
+
     @Slot(str, int, int, int)
     def set_drag_style(self, color, border, radius, fill_pct):
         """color is a QML colour string, "#rrggbb" or "#aarrggbb"."""
@@ -970,6 +982,15 @@ class Bridge(QObject):
     @Slot(result=str)
     def get_settings(self):
         return json.dumps(settings)
+
+    @Property(bool, constant=True)
+    def legacyWindows(self):
+        """Ordinary windows instead of layer-shell surfaces.
+
+        Constant: a window is or is not a layer surface from the moment its
+        surface is created, so this cannot change without a restart.
+        """
+        return bool(settings.get('legacy_windows', False))
 
     @Slot(result="QVariantList")
     def available_outputs(self):
