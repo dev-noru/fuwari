@@ -128,6 +128,7 @@ class Bridge(QObject):
     windowMoved = Signal(int, int)
     windowDragCancelled = Signal()
     screenSizeChanged = Signal()
+    screenOriginChanged = Signal()
     # token index, then its bounding rect on screen in logical pixels, then
     # the lemma to look up
     ocrHovered = Signal(int, int, int, int, int, str)
@@ -180,6 +181,13 @@ class Bridge(QObject):
         self._ocr_hover_timer.start()
         self._screen_w = 0
         self._screen_h = 0
+        # Top-left of the output in global compositor space. Zero on a single
+        # monitor; non-zero for any secondary monitor, which is why it cannot
+        # be assumed away.
+        self._screen_x = 0
+        self._screen_y = 0
+        self._screen_valid = False
+        self._output_name = ""
 
         self._drag_timer = QTimer(self)
         self._drag_timer.setInterval(16)          # ~60Hz, matches the ghost redraw
@@ -243,22 +251,71 @@ class Bridge(QObject):
             self._screen_timer.stop()
             return
         self._screen_attempts += 1
-        try:
-            w, h = self._ls().screen_size()
-        except Exception as e:
-            print("screen_size failed:", e)
+        if self._query_screen_geometry():
             self._screen_timer.stop()
-            return
-        if w > 0 and h > 0:
-            self._screen_timer.stop()
-            if (w, h) != (self._screen_w, self._screen_h):
-                self._screen_w = w
-                self._screen_h = h
-                print(f"crate screen size: {w} x {h}")
-                self.screenSizeChanged.emit()
         elif self._screen_attempts > 50:      # ~5s
-            print("crate never reported a screen size")
+            print("fuwari: crate never reported a screen size; "
+                  "positions will fall back to Qt's own screen metrics")
             self._screen_timer.stop()
+
+    def _query_screen_geometry(self):
+        """Read geometry from the crate. Returns True once it is real.
+
+        Split out of the timer so a drag can re-query on demand: the timer
+        gives up after ~5s and never restarts, so without this a slow
+        compositor left the window pinned at 0x0 for the rest of the session.
+        """
+        try:
+            x, y, w, h, valid = self._ls().screen_geometry()
+        except Exception as e:
+            print("screen_geometry failed:", e)
+            return False
+        if not valid or w <= 0 or h <= 0:
+            return False
+        if (x, y, w, h) != (self._screen_x, self._screen_y,
+                            self._screen_w, self._screen_h):
+            size_changed = (w, h) != (self._screen_w, self._screen_h)
+            origin_changed = (x, y) != (self._screen_x, self._screen_y)
+            self._screen_x, self._screen_y = x, y
+            self._screen_w, self._screen_h = w, h
+            print(f"crate screen geometry: {w} x {h} at {x},{y}")
+            if size_changed:
+                self.screenSizeChanged.emit()
+            if origin_changed:
+                self.screenOriginChanged.emit()
+        self._screen_valid = True
+        return True
+
+    @Slot(str)
+    def set_output_name(self, name):
+        """Tell the crate which monitor the window is on.
+
+        Qt reports the wl_output name via Screen.name. Without it the crate
+        cannot distinguish monitors and reports whichever it saw last.
+        """
+        if not name or name == self._output_name:
+            return
+        # An explicit startup_output wins. Qt does not know where layer-shell
+        # actually put the surface, so onScreenChanged fires with Qt's own idea
+        # of the screen and would otherwise re-anchor the crate to the wrong
+        # monitor moments after the correct one was set.
+        configured = settings.get('startup_output', '')
+        if configured and name != configured:
+            print(f"ignoring output change to {name!r}; "
+                  f"startup_output pins us to {configured!r}")
+            return
+        self._output_name = name
+        if not self.isWayland:
+            return
+        try:
+            self._ls().set_output_name(name)
+        except Exception as e:
+            print("set_output_name failed:", e)
+            return
+        # The name usually lands after the outputs are known, so re-poll for a
+        # short while rather than waiting on an output event that never comes.
+        self._screen_attempts = 0
+        self._screen_timer.start()
 
     @Property(int, notify=screenSizeChanged)
     def screenWidth(self):
@@ -267,6 +324,14 @@ class Bridge(QObject):
     @Property(int, notify=screenSizeChanged)
     def screenHeight(self):
         return self._screen_h
+
+    @Property(int, notify=screenOriginChanged)
+    def screenX(self):
+        return self._screen_x
+
+    @Property(int, notify=screenOriginChanged)
+    def screenY(self):
+        return self._screen_y
 
     @Property(bool, constant=True)
     def isWayland(self):
@@ -296,6 +361,11 @@ class Bridge(QObject):
     def start_window_drag(self, x, y, w, h, grab_x, grab_y):
         """Called from the toolbar's onPressed. Hands the window geometry to the
         crate, which maps a stationary full-screen overlay and draws the ghost."""
+        # Last chance to learn the real screen geometry. The startup poll gives
+        # up after ~5s, so on a compositor that is slow to advertise outputs
+        # this is the only thing standing between the user and a dead drag.
+        if not self._screen_valid:
+            self._query_screen_geometry()
         try:
             self._ls().start_drag(x, y, w, h, grab_x, grab_y)
         except Exception as e:
@@ -384,7 +454,7 @@ class Bridge(QObject):
     def set_words(self, words):
         self._words = words
         self.wordsChanged.emit()
-        print(words)
+        
 
     words = Property(list, get_words, set_words, notify=wordsChanged)
 
@@ -900,6 +970,42 @@ class Bridge(QObject):
     @Slot(result=str)
     def get_settings(self):
         return json.dumps(settings)
+
+    @Slot(result="QVariantList")
+    def available_outputs(self):
+        """wl_output names Qt knows about, for the settings dropdown."""
+        return [s.name() for s in QGuiApplication.screens() if s.name()]
+
+    @Property(QObject, constant=True)
+    def startupScreen(self):
+        """QScreen named by startup_output, for LayerShell.Window.screen.
+
+        Bound declaratively in QML so it is in place before the layer surface
+        is created: layer-shell-qt reads its own screen property first and only
+        falls back to QWindow::screen(), and by the time main.py can call
+        setScreen() the platform window may already exist. Constant because a
+        layer surface cannot change output once created anyway.
+        """
+        return self.startup_screen()
+
+    def startup_screen(self):
+        """The QScreen named by the startup_output setting, or None.
+
+        None means "no preference": layer-shell is then given a null output and
+        the compositor picks, which is the protocol's own default and generally
+        lands on the display last interacted with. Wayland offers a client no
+        way to locate the pointer itself, so an explicit name is the only way
+        to make this deterministic across compositors.
+        """
+        wanted = settings.get('startup_output', '')
+        if not wanted:
+            return None
+        for screen in QGuiApplication.screens():
+            if screen.name() == wanted:
+                return screen
+        print(f"startup_output is set to {wanted!r}, which is not connected; "
+              f"letting the compositor choose")
+        return None
 
     @Slot(str, result=str)
     def store_media_file(self, file_path):

@@ -161,8 +161,49 @@ pub extern "C" fn fuwari_capture(
     }
 }
 
-/// Screen size in compositor logical pixels. Both outputs are set to 0 if no
-/// output has been seen yet.
+/// Geometry of the output Fuwari is on, in compositor logical pixels.
+///
+/// Writes the origin as well as the size: on a multi-monitor session the
+/// top-left of the output is not (0, 0), and code that assumes it is will place
+/// windows and popups on the wrong screen. Returns 1 if an output has actually
+/// been resolved, 0 if the values are still unknown -- callers must check this
+/// rather than treating a zero size as a real answer.
+#[unsafe(no_mangle)]
+pub extern "C" fn fuwari_screen_geometry(
+    ptr: *mut FuwariHandle,
+    out_x: *mut i32,
+    out_y: *mut i32,
+    out_w: *mut u32,
+    out_h: *mut u32,
+) -> i32 {
+    if ptr.is_null() { return 0; }
+    unsafe {
+        let handle = &*ptr;
+        if !out_x.is_null() { *out_x = handle.screen.x.load(Ordering::Relaxed); }
+        if !out_y.is_null() { *out_y = handle.screen.y.load(Ordering::Relaxed); }
+        if !out_w.is_null() { *out_w = handle.screen.width.load(Ordering::Relaxed); }
+        if !out_h.is_null() { *out_h = handle.screen.height.load(Ordering::Relaxed); }
+        if handle.screen.valid.load(Ordering::Relaxed) { 1 } else { 0 }
+    }
+}
+
+/// Name the output Fuwari's window is on, as Qt reports it ("DP-1", ...).
+/// Until this is called the crate cannot tell which monitor to measure, and
+/// falls back to whichever it saw last.
+#[unsafe(no_mangle)]
+pub extern "C" fn fuwari_set_output_name(ptr: *mut FuwariHandle, name: *const std::ffi::c_char) {
+    if ptr.is_null() || name.is_null() { return; }
+    unsafe {
+        let handle = &*ptr;
+        let Ok(text) = std::ffi::CStr::from_ptr(name).to_str() else { return };
+        if text.is_empty() { return; }
+        handle.cmd_tx.send(Command::SetOutputName(text.to_owned())).ok();
+    }
+}
+
+/// Size only, kept so existing callers keep building. Prefer
+/// `fuwari_screen_geometry`, which also reports the origin and whether the
+/// answer is real.
 #[unsafe(no_mangle)]
 pub extern "C" fn fuwari_screen_size(ptr: *mut FuwariHandle, out_w: *mut u32, out_h: *mut u32) {
     if ptr.is_null() { return; }

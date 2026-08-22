@@ -199,9 +199,24 @@ class OCRThread:
         # Kept so character boxes, which come back in capture-image physical
         # pixels, can be put back on the screen later: the origin shifts them
         # and physical_width / w gives the scale to divide by.
+        #
+        # Stays output-local, because that is the space the overlay draws in.
         self._capture_origin = (x, y)
         self._capture_logical = (w, h)
-        return self._layershell.capture(x, y, w, h)
+
+        # grim works in global layout coordinates, but the selection came from
+        # a layer surface anchored to our output and so is output-local. On any
+        # monitor whose top-left is not (0, 0) the two differ by exactly the
+        # output origin, and without this the capture is taken from the wrong
+        # part of the desktop while the boxes are drawn in the right place.
+        ox, oy = 0, 0
+        try:
+            gx, gy, _, _, valid = self._layershell.screen_geometry()
+            if valid:
+                ox, oy = gx, gy
+        except Exception as e:
+            print("screen_geometry failed during capture:", e)
+        return self._layershell.capture(x + ox, y + oy, w, h)
 
     @staticmethod
     def _order_regions(regions):

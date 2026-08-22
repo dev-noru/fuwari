@@ -94,6 +94,15 @@ pub struct OverlayState {
     width: u32,
     height: u32,
     screen: Arc<crate::event_loop::ScreenSize>,
+    /// The output Fuwari's window sits on, by name. Set from QML via
+    /// Command::SetOutputName. `None` means "not told yet", in which case
+    /// adopt_output_size falls back to last-seen -- fine on one monitor,
+    /// arbitrary on several.
+    target_output_name: Option<String>,
+    /// The wl_output matching `target_output_name`, once one has been seen.
+    /// Every layer surface is anchored to this so they cannot land on
+    /// different monitors and disagree about the screen size.
+    target_output: Option<WlOutput>,
     qh: QueueHandle<OverlayState>,
     exit: bool,
 }
@@ -159,8 +168,16 @@ impl LayerShellHandler for OverlayState {
         let new_h = NonZeroU32::new(configure.new_size.1).map_or(self.height, NonZeroU32::get);
         self.width = new_w;
         self.height = new_h;
-        self.screen.width.store(new_w, Ordering::Relaxed);
-        self.screen.height.store(new_h, Ordering::Relaxed);
+
+        // Only publish this as *the* screen size if we have no better answer
+        // yet. adopt_output_size knows the origin as well and is authoritative;
+        // configure only knows a size, and previously every surface wrote here
+        // unconditionally, so three surfaces could each overwrite the others.
+        if !self.screen.valid.load(Ordering::Relaxed) && new_w > 0 && new_h > 0 {
+            self.screen.width.store(new_w, Ordering::Relaxed);
+            self.screen.height.store(new_h, Ordering::Relaxed);
+            self.screen.valid.store(true, Ordering::Relaxed);
+        }
 
         let is_drag = self.drag_surface.as_ref()
             .map_or(false, |s| s.wl_surface() == layer.wl_surface());
@@ -321,19 +338,102 @@ impl PointerHandler for OverlayState {
 }
 
 impl OverlayState {
+    /// Tell the crate which monitor Fuwari's window is on. Re-scans every
+    /// output already known, since the name usually arrives after the
+    /// compositor has finished advertising them.
+    pub fn set_output_name(&mut self, name: String) {
+        if self.target_output_name.as_deref() == Some(name.as_str()) {
+            return;
+        }
+        self.target_output_name = Some(name);
+        self.target_output = None;
+        let known: Vec<WlOutput> = self.output_state.outputs().collect();
+        for output in &known {
+            self.adopt_output_size(output);
+        }
+        // An empty list is the ordinary startup ordering: the name arrives
+        // from Qt before the compositor has finished advertising outputs, and
+        // new_output matches moments later. Warning on it would send anyone
+        // reading a bug report chasing a failure that resolved itself.
+        if self.target_output.is_none() && !known.is_empty() {
+            let names: Vec<String> = known
+                .iter()
+                .filter_map(|o| self.output_state.info(o))
+                .map(|i| i.name.unwrap_or_else(|| "<unnamed>".to_string()))
+                .collect();
+            eprintln!(
+                "fuwari: no output named {:?}; known outputs: {:?}",
+                self.target_output_name, names
+            );
+        }
+    }
+
+    /// Record the geometry of `output` if it is the one we care about.
+    ///
+    /// Two things this must get right that the previous version did not: it
+    /// only accepts the *named* output rather than whichever arrived last, and
+    /// it records the output's origin as well as its size, because a second
+    /// monitor's top-left is not (0, 0).
     fn adopt_output_size(&mut self, output: &WlOutput) {
-        // Gives us a screen size before any surface has been mapped, so Python
-        // can clamp sensibly at startup. Multi-monitor: last output wins.
-        if let Some(info) = self.output_state.info(output) {
-            if let Some((w, h)) = info.logical_size {
-                if w > 0 && h > 0 {
-                    self.width = w as u32;
-                    self.height = h as u32;
-                    self.screen.width.store(w as u32, Ordering::Relaxed);
-                    self.screen.height.store(h as u32, Ordering::Relaxed);
-                }
+        let Some(info) = self.output_state.info(output) else {
+            return;
+        };
+
+        // Only the named output counts. An unnamed output is accepted as a
+        // fallback: some compositors omit xdg-output names, and a slightly
+        // wrong monitor beats no geometry at all.
+        if let Some(want) = self.target_output_name.as_deref() {
+            match info.name.as_deref() {
+                Some(name) if name != want => return,
+                _ => {}
             }
         }
+
+        // logical_size comes from xdg-output, which is optional and may never
+        // arrive -- this is why some users sat at 0x0 forever. Fall back to the
+        // current mode divided by the scale factor.
+        let (w, h) = match info.logical_size {
+            Some((w, h)) if w > 0 && h > 0 => (w, h),
+            _ => {
+                let mode = info
+                    .modes
+                    .iter()
+                    .find(|m| m.current)
+                    .or_else(|| info.modes.first());
+                let Some(mode) = mode else {
+                    eprintln!(
+                        "fuwari: output {:?} reported neither logical_size nor any mode",
+                        info.name
+                    );
+                    return;
+                };
+                let scale = if info.scale_factor > 0 { info.scale_factor } else { 1 };
+                let (pw, ph) = mode.dimensions;
+                if pw <= 0 || ph <= 0 {
+                    eprintln!("fuwari: output {:?} reported a zero-sized mode", info.name);
+                    return;
+                }
+                eprintln!(
+                    "fuwari: output {:?} has no xdg-output logical size; \
+                     deriving {}x{} from mode {}x{} at scale {}",
+                    info.name, pw / scale, ph / scale, pw, ph, scale
+                );
+                (pw / scale, ph / scale)
+            }
+        };
+
+        // logical_position is also xdg-output only; `location` comes from the
+        // core wl_output geometry event and is always present.
+        let (ox, oy) = info.logical_position.unwrap_or(info.location);
+
+        self.width = w as u32;
+        self.height = h as u32;
+        self.screen.width.store(w as u32, Ordering::Relaxed);
+        self.screen.height.store(h as u32, Ordering::Relaxed);
+        self.screen.x.store(ox, Ordering::Relaxed);
+        self.screen.y.store(oy, Ordering::Relaxed);
+        self.screen.valid.store(true, Ordering::Relaxed);
+        self.target_output = Some(output.clone());
     }
 
     // --- OCR highlight surface methods (unchanged) ---
@@ -380,15 +480,18 @@ impl OverlayState {
     pub fn show(&mut self) {
         let qh = self.qh.clone();
         let surface = self.compositor_state.create_surface(&qh);
+        let output = self.target_output.clone();
         let layer_surface = self.layer_shell.create_layer_surface(
             &qh,
             surface,
             Layer::Overlay,
             Some("fuwari_overlay"),
-            None,
+            output.as_ref(),
         );
         layer_surface.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
-        layer_surface.set_size(self.width, self.height);
+        // Anchored to all four edges, so 0 means "compositor, you tell us".
+        // Passing a stale self.width is what let a zero propagate forever.
+        layer_surface.set_size(0, 0);
         layer_surface.set_exclusive_zone(-1);
         layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer_surface.wl_surface().commit();
@@ -567,15 +670,18 @@ impl OverlayState {
         }
         let qh = self.qh.clone();
         let surface = self.compositor_state.create_surface(&qh);
+        let output = self.target_output.clone();
         let layer_surface = self.layer_shell.create_layer_surface(
             &qh,
             surface,
             Layer::Overlay,
             Some("fuwari_select"),
-            None,
+            output.as_ref(),
         );
         layer_surface.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
-        layer_surface.set_size(self.width, self.height);
+        // Anchored to all four edges, so 0 means "compositor, you tell us".
+        // Passing a stale self.width is what let a zero propagate forever.
+        layer_surface.set_size(0, 0);
         layer_surface.set_exclusive_zone(-1);
         layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer_surface.wl_surface().commit();
@@ -717,15 +823,18 @@ impl OverlayState {
         }
         let qh = self.qh.clone();
         let surface = self.compositor_state.create_surface(&qh);
+        let output = self.target_output.clone();
         let layer_surface = self.layer_shell.create_layer_surface(
             &qh,
             surface,
             Layer::Overlay,
             Some("fuwari_drag"),
-            None,
+            output.as_ref(),
         );
         layer_surface.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
-        layer_surface.set_size(self.width, self.height);
+        // Anchored to all four edges, so 0 means "compositor, you tell us".
+        // Passing a stale self.width is what let a zero propagate forever.
+        layer_surface.set_size(0, 0);
         layer_surface.set_exclusive_zone(-1);
         layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer_surface.wl_surface().commit();
@@ -945,9 +1054,15 @@ pub fn new(
         debug_boxes: false,
         debug_color: (0, 255, 0),
         shm,
-        width: 1646,
-        height: 1097,
+        // No hardcoded fallback: these were the developer's own screen
+        // dimensions, which silently produced plausible-but-wrong geometry on
+        // every other machine. 0 means "unknown"; anchored surfaces pass 0 to
+        // set_size so the compositor tells us the real value instead.
+        width: 0,
+        height: 0,
         screen,
+        target_output_name: None,
+        target_output: None,
         qh: qh.clone(),
         exit: false,
     };

@@ -15,6 +15,10 @@ pub enum Command {
     SetRegions(Vec<Region>),
     StartRegionSelect,
     StopRegionSelect,
+    /// Name of the wl_output Fuwari's window is on, as Qt reports it
+    /// ("DP-1", "HDMI-A-1", ...). Without this the crate cannot tell which
+    /// monitor's geometry to report on a multi-output session.
+    SetOutputName(String),
     StartDrag {
         x: i32,
         y: i32,

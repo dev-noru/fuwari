@@ -107,6 +107,20 @@ lib.fuwari_screen_size.argtypes = [
     ctypes.POINTER(ctypes.c_uint32),
 ]
 
+# Origin-aware replacement for fuwari_screen_size. Optional so an older .so
+# still loads; screen_geometry() falls back to the size-only call.
+_screen_geometry = _bind("fuwari_screen_geometry", ctypes.c_int32, [
+    ctypes.c_uint64,                    # handle
+    ctypes.POINTER(ctypes.c_int32),     # out_x
+    ctypes.POINTER(ctypes.c_int32),     # out_y
+    ctypes.POINTER(ctypes.c_uint32),    # out_w
+    ctypes.POINTER(ctypes.c_uint32),    # out_h
+])
+_set_output_name = _bind("fuwari_set_output_name", None, [
+    ctypes.c_uint64,                    # handle
+    ctypes.c_char_p,                    # output name, e.g. b"DP-1"
+])
+
 lib.fuwari_capture.restype = ctypes.POINTER(ctypes.c_ubyte)
 lib.fuwari_capture.argtypes = [
     ctypes.c_uint64,                    # handle
@@ -139,6 +153,31 @@ class LayerShell:
         h = ctypes.c_uint32(0)
         lib.fuwari_screen_size(self.handle, ctypes.byref(w), ctypes.byref(h))
         return w.value, h.value
+
+    def screen_geometry(self):
+        """(x, y, width, height, valid) for the output Fuwari is on, in
+        compositor logical pixels.
+
+        `valid` is False when no output has been resolved yet -- distinct from
+        a real zero. On a multi-monitor session (x, y) is the output's top-left
+        in global space and is NOT (0, 0) for secondary monitors.
+        """
+        if _screen_geometry is None:
+            w, h = self.screen_size()
+            return 0, 0, w, h, bool(w and h)
+        x = ctypes.c_int32(0)
+        y = ctypes.c_int32(0)
+        w = ctypes.c_uint32(0)
+        h = ctypes.c_uint32(0)
+        ok = _screen_geometry(self.handle, ctypes.byref(x), ctypes.byref(y),
+                              ctypes.byref(w), ctypes.byref(h))
+        return x.value, y.value, w.value, h.value, bool(ok)
+
+    def set_output_name(self, name):
+        """Tell the crate which monitor the window is on, by wl_output name."""
+        if _set_output_name is None or not name:
+            return
+        _set_output_name(self.handle, name.encode("utf-8"))
 
     def capture(self, x, y, w, h):
         out_w = ctypes.c_uint32(0)

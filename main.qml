@@ -11,14 +11,31 @@ Window {
   height: 100
   minimumHeight: 50
   minimumWidth: 300
-  visible: true
+  // Mapped from main.py once the startup monitor has been settled. A layer
+  // surface binds to one output when it is created and cannot be moved after,
+  // so the screen has to be chosen before the surface exists.
+  visible: false
 
-  Component.onCompleted: console.log(
-    "screen:", Screen.width, "x", Screen.height,
-    "| avail:", Screen.desktopAvailableWidth, "x", Screen.desktopAvailableHeight,
-    "| crate:", bridge.screenWidth, "x", bridge.screenHeight,
-    "| win:", mainWindow.width, "x", mainWindow.height,
-    "| dpr:", Screen.devicePixelRatio)
+  Component.onCompleted: {
+    // Deliberately NOT announcing the output here: the Screen attached
+    // property is not valid until the window has been shown, and the window is
+    // mapped from main.py, so this would name the wrong monitor. main.py
+    // announces it after mapping; onScreenChanged covers every later move.
+    console.log(
+      "screen:", Screen.name, Screen.width, "x", Screen.height,
+      "| avail:", Screen.desktopAvailableWidth, "x", Screen.desktopAvailableHeight,
+      "| crate:", bridge.screenWidth, "x", bridge.screenHeight,
+      "at", bridge.screenX + "," + bridge.screenY,
+      "| win:", mainWindow.width, "x", mainWindow.height,
+      "| dpr:", Screen.devicePixelRatio)
+  }
+
+  // Qt can hand the window to a different screen at runtime (monitor
+  // unplugged, compositor reshuffle). Re-announce so the crate re-measures.
+  onScreenChanged: {
+    if (bridge && bridge.isWayland && Screen.name)
+      bridge.set_output_name(Screen.name)
+  }
 
   property int posX: 0
   property int posY: 0
@@ -57,6 +74,13 @@ Window {
   property int ghostFillPct: 14
 
   LayerShell.Window.layer: LayerShell.Window.LayerOverlay
+  // The monitor named by the startup_output setting, or null for "compositor
+  // decides". Set here rather than from main.py because layer-shell-qt reads
+  // this when the surface is created and only falls back to QWindow::screen()
+  // if it is null -- and by the time Python can call setScreen() the surface
+  // may already exist, leaving the window visible on one monitor while every
+  // coordinate is measured against another.
+  LayerShell.Window.screen: bridge ? bridge.startupScreen : null
   LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
   LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
   LayerShell.Window.margins: Qt.rect(mainWindow.posX, mainWindow.posY, 0, 0)
@@ -373,9 +397,11 @@ Window {
         return
       }
       console.log("DRAG end | crate returned:", x, y)
-      var s = mainWindow.dragScale
-      var nx = Math.round(x / s)
-      var ny = Math.round(y / s)
+      // Already output-local: the drag overlay is a layer surface anchored to
+      // our output, and Wayland pointer coordinates are surface-local. Do NOT
+      // subtract the output origin here -- that double-corrects and, on a
+      // monitor whose origin is below the others, drives y negative so every
+      // drop clamps to the top edge.
       mainWindow.posX = Math.max(0, Math.min(mainWindow.screenW - mainWindow.ghostW, x))
       mainWindow.posY = Math.max(0, Math.min(mainWindow.screenH - mainWindow.ghostH, y))
       mainWindow.dragging = false

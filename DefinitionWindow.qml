@@ -25,6 +25,11 @@ Window {
     property int posY: 0
 
     LayerShell.Window.layer: LayerShell.Window.LayerOverlay
+    // Same monitor as the main window. Without this the surface falls back to
+    // QWindow::screen(), which is whatever Qt assigned -- not where
+    // layer-shell actually put the main window -- so the popup opens on a
+    // different monitor than the window it belongs to.
+    LayerShell.Window.screen: bridge ? bridge.startupScreen : null
     LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorLeft
     LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
     LayerShell.Window.margins: Qt.rect(root.posX, root.posY, 0, 0)

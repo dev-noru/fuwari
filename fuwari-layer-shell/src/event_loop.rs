@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -9,12 +9,37 @@ use crate::types::{Command, Event};
 use smithay_client_toolkit::reexports::calloop::{channel, EventLoop};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 
-/// Written by the Wayland thread (from wl_output logical size, then refined by
-/// each layer-surface configure), read by the FFI thread. Zero until the first
-/// output arrives.
+/// Geometry of the single output Fuwari lives on, in compositor logical pixels.
+///
+/// Written by the Wayland thread, read by the FFI thread. A Wayland session has
+/// N outputs, each with its own size AND its own origin. This describes exactly
+/// one of them: the output named via `Command::SetOutputName`. Until that name
+/// arrives the crate falls back to whichever output it happened to see last,
+/// which is only ever correct on a single-monitor setup.
+///
+/// `valid` distinguishes "no output resolved yet" from a genuine zero, so a
+/// caller can tell a missing answer from a wrong one instead of silently
+/// clamping everything to 0x0.
 pub struct ScreenSize {
     pub width: AtomicU32,
     pub height: AtomicU32,
+    /// Top-left of the output in global compositor space. Non-zero for any
+    /// monitor that is not the leftmost/topmost one.
+    pub x: AtomicI32,
+    pub y: AtomicI32,
+    pub valid: AtomicBool,
+}
+
+impl ScreenSize {
+    fn new() -> Self {
+        ScreenSize {
+            width: AtomicU32::new(0),
+            height: AtomicU32::new(0),
+            x: AtomicI32::new(0),
+            y: AtomicI32::new(0),
+            valid: AtomicBool::new(false),
+        }
+    }
 }
 
 pub fn start() -> (
@@ -25,10 +50,7 @@ pub fn start() -> (
     let (cmd_tx, cmd_rx) = channel::channel::<Command>();
     let (evt_tx, evt_rx) = mpsc::channel();
 
-    let screen = Arc::new(ScreenSize {
-        width: AtomicU32::new(0),
-        height: AtomicU32::new(0),
-    });
+    let screen = Arc::new(ScreenSize::new());
     let screen_for_thread = Arc::clone(&screen);
 
     thread::spawn(move || {
@@ -53,6 +75,7 @@ pub fn start() -> (
                         Command::SetRegions(regions) => state.set_regions(regions),
                         Command::StartRegionSelect => state.start_region_select(),
                         Command::StopRegionSelect => state.stop_region_select(),
+                        Command::SetOutputName(name) => state.set_output_name(name),
                         Command::StartDrag {
                             x,
                             y,

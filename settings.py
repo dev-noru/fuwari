@@ -15,7 +15,14 @@ DEFAULT_SETTINGS = {
     "def_height": 200,
     'text_source': 'clipboard',
     'textractor_ws_url': 'ws://localhost:6677',
-    'lunatranslator_ws_url': 'ws://localhost:2333/api/ws/text/origin'
+    'lunatranslator_ws_url': 'ws://localhost:2333/api/ws/text/origin',
+    # Which monitor to open on, by wl_output name ("eDP-1", "DP-3", ...).
+    # Empty means "let the compositor choose", which is what layer-shell does
+    # with a null output: generally the display the user most recently
+    # interacted with. Wayland gives a client no way to find the pointer's
+    # monitor itself, so on a multi-monitor setup this is the only way to make
+    # the choice deterministic.
+    'startup_output': ''
 }
 
 def load_settings():

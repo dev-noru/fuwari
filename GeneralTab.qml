@@ -8,6 +8,9 @@ Item {
     property string textractorUrl: "ws://localhost:6677"
     property string lunaUrl: "ws://localhost:2333/api/ws/text/origin"
     property bool saved: false
+    // "" means no preference: layer-shell passes a null output and the
+    // compositor picks, generally the display last interacted with.
+    property string startupOutput: ""
 
     function load() {
         var s = JSON.parse(bridge.get_settings())
@@ -15,6 +18,19 @@ Item {
         textractorUrl = s.textractor_ws_url || "ws://localhost:6677"
         lunaUrl = s.lunatranslator_ws_url || "ws://localhost:2333/api/ws/text/origin"
         sourceCombo.currentIndex = ["clipboard", "textractor", "lunatranslator"].indexOf(textSource)
+
+        startupOutput = s.startup_output || ""
+        var outputs = [""].concat(bridge.available_outputs())
+        outputCombo.model = outputs
+        var idx = outputs.indexOf(startupOutput)
+        // A monitor named in settings but not currently connected still shows,
+        // so unplugging a screen does not silently wipe the preference.
+        if (idx < 0 && startupOutput !== "") {
+            outputs.push(startupOutput)
+            outputCombo.model = outputs
+            idx = outputs.length - 1
+        }
+        outputCombo.currentIndex = Math.max(0, idx)
     }
 
     Column {
@@ -36,6 +52,31 @@ Item {
                 leftPadding: 8
             }
             background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
+        }
+
+        Text { text: "Open on monitor"; color: palette.windowText }
+        ComboBox {
+            id: outputCombo
+            width: parent.width
+            model: [""]
+            // Blank reads as automatic; the raw "" would look like a glitch.
+            displayText: currentText === "" ? "Automatic (compositor decides)" : currentText
+            onCurrentTextChanged: startupOutput = currentText
+            contentItem: Text {
+                text: outputCombo.displayText
+                color: palette.windowText
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 8
+            }
+            background: Rectangle { color: palette.dark; border.color: palette.mid; radius: 2 }
+        }
+        Text {
+            text: "Takes effect next time Fuwari starts. Wayland does not let an " +
+                  "application move itself between monitors once open."
+            color: palette.mid
+            wrapMode: Text.WordWrap
+            width: parent.width
+            font.pixelSize: 11
         }
 
         Text { text: "Textractor WebSocket URL"; color: palette.windowText; visible: textSource === "textractor" }
@@ -65,6 +106,7 @@ Item {
                 s.text_source = textSource
                 s.textractor_ws_url = textractorUrl
                 s.lunatranslator_ws_url = lunaUrl
+                s.startup_output = startupOutput
                 bridge.save_settings_slot(JSON.stringify(s))
                 saved = true
             }

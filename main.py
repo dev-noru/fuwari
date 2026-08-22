@@ -53,9 +53,35 @@ engine.load(os.path.join(script_dir, 'main.qml'))
 if not engine.rootObjects():
     sys.exit("Failed to load main.qml — see the QML errors above")
 
+window = engine.rootObjects()[0]
+
+# The monitor is chosen in main.qml, which binds LayerShell.Window.screen to
+# the startup_output setting: layer-shell reads that when it creates the
+# surface, and a layer surface cannot be moved between outputs afterwards.
+# main.qml leaves the window hidden until here so that binding is in place
+# first. Note QWindow::screen() is NOT the answer -- Qt is never told where
+# layer-shell actually put the surface, so it often names a different monitor.
+_startup_screen = bridge.startup_screen()
+window.setProperty("visible", True)
+
+if _startup_screen is not None:
+    _effective = _startup_screen
+    print(f"startup screen: {_startup_screen.name()} (from startup_output)")
+else:
+    _effective = window.screen()
+    print(f"startup screen: {_effective.name() if _effective is not None else '<none>'}"
+          "  (compositor's choice; set startup_output in settings to pin it)")
+
+# Tell the crate which monitor to measure. This has to come from here rather
+# than Component.onCompleted: QML's Screen attached property is not meaningful
+# until the window has been shown, so reading it there names the wrong monitor
+# and every coordinate is then measured against a screen the window is not on.
+if _effective is not None:
+    bridge.set_output_name(_effective.name())
+
 # The window is needed to force a wl_surface commit after moving: layer-shell
 # margins are double-buffered and do not apply until the next frame.
-bridge.set_window(engine.rootObjects()[0])
+bridge.set_window(window)
 
 if os.getenv('FUWARI_MEMTRACE') == '1':
     from PySide6.QtCore import QTimer as _QTimer
