@@ -50,3 +50,5 @@ leak_test*.py
 # build-appimage.sh, *.py, *.qml, requirements.txt, fuwari.desktop, fuwari.png are tracked
 fuwari-layer-shell/test_capture.png
 tmp/
+heaptrack.*.zst
+leak_test*.py
