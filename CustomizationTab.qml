@@ -67,6 +67,7 @@ Item {
             SpinBox {
                 id: popupFontSizeSpin
                 from: 6; to: 32
+                editable: true
                 value: popupFontSize
                 onValueChanged: popupFontSize = value
             }
@@ -90,6 +91,7 @@ Item {
             SpinBox {
                 id: clipboardFontSizeSpin
                 from: 6; to: 32
+                editable: true
                 value: clipboardFontSize
                 onValueChanged: clipboardFontSize = value
             }
@@ -111,12 +113,14 @@ Item {
             SpinBox {
                 id: mainWidthSpin
                 from: 300; to: 2000
+                editable: true
                 value: mainWidth
                 onValueChanged: mainWidth = value
             }
             SpinBox {
                 id: mainHeightSpin
                 from: 50; to: 1000
+                editable: true
                 value: mainHeight
                 onValueChanged: mainHeight = value
             }
