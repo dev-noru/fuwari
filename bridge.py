@@ -18,7 +18,7 @@ from collections import deque
 import websockets
 from dictionary import cursor
 import re
-from PySide6.QtGui import QGuiApplication, QCursor
+from PySide6.QtGui import QGuiApplication, QCursor, QFontDatabase
 
 # Give up if the crate never answers (e.g. the overlay was killed).
 DRAG_TIMEOUT_MS = 30000
@@ -128,7 +128,12 @@ class Bridge(QObject):
     windowMoved = Signal(int, int)
     windowDragCancelled = Signal()
     screenSizeChanged = Signal()
+    mainSizeChanged = Signal()
+    defSizeChanged = Signal()
+    uiScaleChanged = Signal()
     screenOriginChanged = Signal()
+    popupFontChanged = Signal()
+    clipboardFontChanged = Signal()
     # token index, then its bounding rect on screen in logical pixels, then
     # the lemma to look up
     ocrHovered = Signal(int, int, int, int, int, str)
@@ -332,6 +337,44 @@ class Bridge(QObject):
     @Property(int, notify=screenOriginChanged)
     def screenY(self):
         return self._screen_y
+    @Property(int, notify=mainSizeChanged)
+    def mainWidth(self):
+        return settings.get('main_width', 400)
+
+    @Property(int, notify=mainSizeChanged)
+    def mainHeight(self):
+        return settings.get('main_height', 100)
+
+    @Property(int, notify=defSizeChanged)
+    def defWidth(self):
+        return settings.get('def_width', 300)
+
+    @Property(int, notify=defSizeChanged)
+    def defHeight(self):
+        return settings.get('def_height', 200)
+
+    @Property(float, notify=uiScaleChanged)
+    def uiScale(self):
+        return settings.get('ui_scale', 1.0)
+    @Property(str, notify=popupFontChanged)
+    def popupFont(self):
+        return settings.get('popup_font', 'Noto Sans CJK JP')
+
+    @Property(int, notify=popupFontChanged)
+    def popupFontSize(self):
+        return settings.get('popup_font_size', 11)
+
+    @Property(str, notify=clipboardFontChanged)
+    def clipboardFont(self):
+        return settings.get('clipboard_font', 'Noto Sans CJK JP')
+
+    @Property(int, notify=clipboardFontChanged)
+    def clipboardFontSize(self):
+        return settings.get('clipboard_font_size', 12)
+
+    @Slot(result="QVariantList")
+    def available_fonts(self):
+        return QFontDatabase.families(QFontDatabase.WritingSystem.Japanese)
 
     @Property(bool, constant=True)
     def isWayland(self):
@@ -1047,6 +1090,11 @@ class Bridge(QObject):
         global settings
         settings = json.loads(settings_json)
         save_settings(settings)
+        self.mainSizeChanged.emit()
+        self.defSizeChanged.emit()
+        self.uiScaleChanged.emit()
+        self.popupFontChanged.emit()
+        self.clipboardFontChanged.emit()
 
     @Slot(str, result=str)
     def lookup(self, word):

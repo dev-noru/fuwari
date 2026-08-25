@@ -7,7 +7,7 @@ Window {
     id: root
     color: palette.base
     title: "Settings"
-    width: 450
+    width: 550
     height: 550
     visible: false
     flags: Qt.Window | Qt.WindowStaysOnTopHint
@@ -19,6 +19,7 @@ Window {
             ankiTab.load()
             dictTab.load()
             generalTab.load()
+            customizationTab.load()
         }
     }
 
@@ -83,6 +84,26 @@ Window {
                 }
             }
         }
+
+        TabButton {
+            text: "Customization"
+            contentItem: Text {
+                text: parent.text
+                color: palette.windowText
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            background: Rectangle {
+                color: palette.base
+                Rectangle {
+                    width: parent.width
+                    height: 2
+                    anchors.top: parent.top
+                    color: tabBar.currentIndex === 3 ? palette.highlight : "transparent"
+                }
+            }
+        }
+
     }
 
     StackLayout {
@@ -105,6 +126,12 @@ Window {
 
         GeneralTab {
             id: generalTab
+            width: parent.width
+            height: parent.height
+        }
+
+        CustomizationTab {
+            id: customizationTab
             width: parent.width
             height: parent.height
         }

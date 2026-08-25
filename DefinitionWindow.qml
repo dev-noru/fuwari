@@ -8,17 +8,17 @@ pragma ComponentBehavior: Bound
 Window {
     flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.WindowDoesNotAcceptFocus
     id: root
-    width: 300
-    height: 200
+    width: root.baseWidth * (bridge ? bridge.uiScale : 1.0)
+    height: root.baseHeight * (bridge ? bridge.uiScale : 1.0)
+    property real baseWidth: bridge ? bridge.defWidth : 300
+    property real baseHeight: bridge ? bridge.defHeight : 200
+    property real s: bridge ? bridge.uiScale : 1.0
+    property real fontRatio: (bridge ? bridge.popupFontSize : 11) / 11
+    property string popupFontFamily: bridge ? bridge.popupFont : "Noto Sans CJK JP"
     minimumHeight: 150
     minimumWidth: 150
     visible: false
     color: palette.base
-    // Layer-shell surfaces cannot be transients, so this must be null there.
-    // In legacy mode the opposite is true: being a child of the main window is
-    // the only way a plain Wayland window gets placed anywhere sensible -- the
-    // compositor puts it beside its parent, which is how the popup behaved
-    // before layer-shell was introduced.
     transientParent: (bridge && bridge.legacyWindows) ? mainWindow : null
     property var currentResults: []
     property string word: ""
@@ -29,10 +29,6 @@ Window {
     property int posX: 0
     property int posY: 0
 
-    // Report this window's footprint to the OCR loop. It is drawn over the
-    // captured region, so without this its pixels trip the change gate and its
-    // own definitions get recognised as game text. Sizes are Qt pixels, scaled
-    // to compositor pixels to match the space the OCR region lives in.
     function _reportMask() {
         if (!bridge) return
         if (!visible) { bridge.set_popup_mask(0, 0, 0, 0); return }
@@ -43,9 +39,6 @@ Window {
     }
     readonly property bool legacy: bridge ? bridge.legacyWindows : false
 
-    // Margins are double-buffered and only apply on the next frame, so they
-    // are re-sent on every move. Merged with the mask report because QML
-    // allows only one handler per signal.
     function _moved() {
         if (!root.legacy)
             LayerShell.Window.margins = Qt.rect(root.posX, root.posY, 0, 0)
@@ -58,9 +51,6 @@ Window {
     onPosXChanged: _moved()
     onPosYChanged: _moved()
 
-    // Applied rather than declared: writing any LayerShell property is what
-    // makes this a layer surface, and there is no value meaning "off". In
-    // legacy mode the popup is an ordinary window the WM places.
     Component.onCompleted: {
         if (root.legacy) return
         LayerShell.Window.layer = LayerShell.Window.LayerOverlay
@@ -111,8 +101,8 @@ Window {
                     wrapMode: Text.Wrap
                     color: palette.windowText
                     font.bold: true
-                    font.pointSize: 12
-                    font.family: "Noto Sans CJK JP"
+                    font.pointSize: 12 * root.s * root.fontRatio
+                    font.family: root.popupFontFamily
                     anchors.verticalCenter: parent.verticalCenter
                 }
                 Rectangle {
@@ -128,7 +118,7 @@ Window {
                         id: mineIcon
                         anchors.centerIn: parent
                         text: "+"
-                        font.pointSize: 10
+                        font.pointSize: 10 * root.s * root.fontRatio
                         font.bold: true
                         color: palette.highlight
                     }
@@ -180,8 +170,8 @@ Window {
                 width: parent.width
                 wrapMode: Text.Wrap
                 color: palette.windowText
-                font.pointSize: 9
-                font.family: "Noto Sans CJK JP"
+                font.pointSize: 9 * root.s * root.fontRatio
+                font.family: root.popupFontFamily
             }
 
             Row {
@@ -198,7 +188,8 @@ Window {
                         text: root.pos
                         anchors.centerIn: parent
                         color: palette.windowText
-                        font.pointSize: 8
+                        font.pointSize: 8 * root.s * root.fontRatio
+                        font.family: root.popupFontFamily
                     }
                 }
                 Rectangle {
@@ -213,7 +204,8 @@ Window {
                         text: root.freq
                         anchors.centerIn: parent
                         color: palette.windowText
-                        font.pointSize: 8
+                        font.pointSize: 8 * root.s * root.fontRatio
+                        font.family: root.popupFontFamily
                     }
                 }
             }
@@ -241,7 +233,8 @@ Window {
                             Text {
                                 text: entryCard.entry.source
                                 color: palette.highlight
-                                font.pointSize: 8
+                                font.pointSize: 8 * root.s * root.fontRatio
+                                font.family: root.popupFontFamily
                                 font.bold: true
                             }
                             Text {
@@ -249,7 +242,7 @@ Window {
                                 color: audioBtnMouse.containsMouse
                                     ? Qt.hsva(palette.highlight.hsvHue, 1.0, palette.highlight.hsvValue, 1.0)
                                     : palette.windowText
-                                font.pointSize: 8
+                                font.pointSize: 8 * root.s * root.fontRatio
                                 MouseArea {
                                     id: audioBtnMouse
                                     anchors.fill: parent
@@ -267,9 +260,9 @@ Window {
                             readOnly: true
                             selectByMouse: true
                             color: palette.windowText
-                            font.pointSize: 9
+                            font.pointSize: 9 * root.s * root.fontRatio
                             font.bold: true
-                            font.family: "Noto Sans CJK JP"
+                            font.family: root.popupFontFamily
                             visible: entryCard.index > 0
                         }
                         TextEdit {
@@ -277,8 +270,8 @@ Window {
                             readOnly: true
                             selectByMouse: true
                             color: palette.windowText
-                            font.pointSize: 8
-                            font.family: "Noto Sans CJK JP"
+                            font.pointSize: 8 * root.s * root.fontRatio
+                            font.family: root.popupFontFamily
                             visible: entryCard.index > 0
                         }
 
@@ -313,7 +306,7 @@ Window {
                                                 anchors.centerIn: parent
                                                 text: senseCol.sense.num
                                                 color: palette.highlight
-                                                font.pointSize: 7
+                                                font.pointSize: 7 * root.s * root.fontRatio
                                                 font.bold: true
                                             }
                                         }
@@ -325,8 +318,8 @@ Window {
                                             selectByMouse: true
                                             wrapMode: Text.Wrap
                                             color: palette.windowText
-                                            font.pointSize: 8
-                                            font.family: "Noto Sans CJK JP"
+                                            font.pointSize: 8 * root.s * root.fontRatio
+                                            font.family: root.popupFontFamily
                                         }
                                     }
 
@@ -341,8 +334,8 @@ Window {
                                             selectByMouse: true
                                             wrapMode: Text.Wrap
                                             color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.55)
-                                            font.pointSize: 7
-                                            font.family: "Noto Sans CJK JP"
+                                            font.pointSize: 7 * root.s * root.fontRatio
+                                            font.family: root.popupFontFamily
                                         }
                                     }
 
@@ -357,8 +350,8 @@ Window {
                                             selectByMouse: true
                                             wrapMode: Text.Wrap
                                             color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.55)
-                                            font.pointSize: 7
-                                            font.family: "Noto Sans CJK JP"
+                                            font.pointSize: 7 * root.s * root.fontRatio
+                                            font.family: root.popupFontFamily
                                         }
                                     }
                                 }
@@ -370,15 +363,15 @@ Window {
                                 Text {
                                     text: "related forms"
                                     color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.45)
-                                    font.pointSize: 7
+                                    font.pointSize: 7 * root.s * root.fontRatio
                                 }
                                 TextEdit {
                                     text: entryCard.entry.Related ? entryCard.entry.Related.join(" · ") : ""
                                     readOnly: true
                                     selectByMouse: true
                                     color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.7)
-                                    font.pointSize: 7
-                                    font.family: "Noto Sans CJK JP"
+                                    font.pointSize: 7 * root.s * root.fontRatio
+                                    font.family: root.popupFontFamily
                                 }
                             }
                         }

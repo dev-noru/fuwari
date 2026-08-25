@@ -5,6 +5,7 @@ import json
 SETTINGS_PATH = os.path.expanduser('~/.config/jp_popup/settings.json')
 
 DEFAULT_SETTINGS = {
+    "ui_scale": 1.0,
     "anki_url": "http://localhost:8765",
     "deck": "",
     "note_type": "",

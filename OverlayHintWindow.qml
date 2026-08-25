@@ -2,54 +2,31 @@ import QtQuick
 import QtQuick.Window
 import org.kde.layershell 1.0 as LayerShell
 
-// The way back while the overlay owns the screen and the main window is
-// hidden. A dot at rest, so it sits over the game without competing with it;
-// hovering reveals the exit. The dot itself is the drag grip.
-//
-// It stays put rather than timing out because it is the only exit: a layer
-// surface with no keyboard interactivity cannot take a shortcut without
-// stealing focus from the game underneath.
 Window {
     id: root
     flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.WindowDoesNotAcceptFocus
     color: "transparent"
-    // Without this the window inherits the main window as a transient parent,
-    // so Qt creates a popup rather than a top level and layershellqt cannot
-    // give it a layer surface: visible reads true but nothing ever appears.
     transientParent: null
     visible: false
 
-    // compositor logical pixels, like every other position in this app
     property int posX: 0
     property int posY: 0
+    property real s: bridge ? bridge.uiScale : 1.0
 
     readonly property bool expanded: dotArea.containsMouse || exitArea.containsMouse
-    // Bright for a moment after activation so it can be found, then it settles
-    // back to being unobtrusive.
+    readonly property int dotMargin: Math.round(5 * root.s)
     property bool introducing: false
 
     signal dismissed()
-    // Surface-local press position, in Qt pixels. The drag is handed to the
-    // crate because a surface cannot measure a drag of itself: the compositor
-    // pins pointer focus to it until release.
     signal dragStarted(real mx, real my)
 
-    // Clamping has to reserve room for the expanded capsule, or dragging the
-    // dot to the right edge would open the exit off screen.
-    readonly property int expandedWidth: 150
-    // The window is sized for the ping, which QML clips to the window bounds.
-    // The visible capsule is drawn smaller inside it, so the pill stays slim
-    // while the ring still has room to expand -- the two used to be the same
-    // rectangle, which forced a fat pill to get a large ring.
-    readonly property int capsuleHeight: 28
-    width: expanded ? expandedWidth : 52
-    height: 52
+    readonly property int expandedWidth: Math.round(150 * root.s)
+    readonly property int capsuleHeight: Math.round(28 * root.s)
+    width: expanded ? expandedWidth : Math.round(52 * root.s)
+    height: Math.round(52 * root.s)
 
     readonly property bool legacy: bridge ? bridge.legacyWindows : false
 
-    // Applied rather than declared: writing any LayerShell property is what
-    // makes this a layer surface, and there is no value meaning "off". In
-    // legacy mode the exit dot is an ordinary window the WM places.
     Component.onCompleted: {
         if (root.legacy) return
         LayerShell.Window.layer = LayerShell.Window.LayerOverlay
@@ -84,7 +61,6 @@ Window {
     }
 
     Rectangle {
-        // The pill. Deliberately not filling the window; see capsuleHeight.
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
@@ -97,9 +73,6 @@ Window {
         Behavior on opacity { NumberAnimation { duration: 130 } }
     }
 
-    // Expanding ring, like a sonar ping. Motion outwards from a fixed point
-    // catches peripheral vision far better than a dot changing size, which is
-    // what makes it findable without having to be permanently bright.
     Rectangle {
         id: ping
         anchors.centerIn: dot
@@ -126,34 +99,27 @@ Window {
 
     Rectangle {
         id: dot
-        width: 14
-        height: 14
+        width: Math.round(14 * root.s)
+        height: Math.round(14 * root.s)
         radius: width / 2
         anchors.left: parent.left
-        // Centred in the collapsed window so the ping expands evenly instead
-        // of being cut off against one edge.
-        anchors.leftMargin: 19
+        anchors.leftMargin: Math.round(19 * root.s)
         anchors.verticalCenter: parent.verticalCenter
         color: palette.highlight
-        // Bright enough to spot on a dark game, dim enough not to nag.
         opacity: root.expanded ? 1.0 : (root.introducing ? 1.0 : 0.7)
         Behavior on opacity { NumberAnimation { duration: 500 } }
 
-        // A soft ring at rest so it reads as a control rather than a stray
-        // pixel, and stays visible against a background its own colour.
         border.color: palette.window
         border.width: 2
 
         MouseArea {
             id: dotArea
             anchors.fill: parent
-            // Widened to the collapsed window so the dot is easy to grab,
-            // without making the target bigger than it looks once expanded.
-            anchors.margins: -5
+            anchors.margins: -root.dotMargin
             hoverEnabled: true
             cursorShape: Qt.OpenHandCursor
-            onPressed: (mouse) => root.dragStarted(mouse.x + dot.x - 5,
-                                                   mouse.y + dot.y - 5)
+            onPressed: (mouse) => root.dragStarted(mouse.x + dot.x - root.dotMargin,
+                                                   mouse.y + dot.y - root.dotMargin)
         }
     }
 
@@ -161,17 +127,17 @@ Window {
         id: exitLabel
         visible: root.expanded
         anchors.left: dot.right
-        anchors.leftMargin: 9
+        anchors.leftMargin: Math.round(9 * root.s)
         anchors.verticalCenter: parent.verticalCenter
         text: "✕  Exit overlay"
-        font.pointSize: 9
+        font.pointSize: 9 * root.s
         font.family: "Noto Sans CJK JP"
         color: exitArea.containsMouse ? palette.highlight : palette.windowText
 
         MouseArea {
             id: exitArea
             anchors.fill: parent
-            anchors.margins: -4
+            anchors.margins: Math.round(-4 * root.s)
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: root.dismissed()

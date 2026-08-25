@@ -7,16 +7,19 @@ Window {
   id: mainWindow
   color: Qt.rgba(palette.window.r, palette.window.g, palette.window.b, 0.9)
   flags: Qt.Window | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
-  width: 400
-  height: 100
-  minimumHeight: 50
-  minimumWidth: 300
+  width: mainWindow.baseWidth * (bridge ? bridge.uiScale : 1.0)
+  height: mainWindow.baseHeight * (bridge ? bridge.uiScale : 1.0)
+  property real baseWidth: bridge ? bridge.mainWidth : 400
+  property real baseHeight: bridge ? bridge.mainHeight : 100
+  property real s: bridge ? bridge.uiScale : 1.0
   // Mapped from main.py once the startup monitor has been settled. A layer
   // surface binds to one output when it is created and cannot be moved after,
   // so the screen has to be chosen before the surface exists.
   visible: false
 
   Component.onCompleted: {
+    var s = JSON.parse(bridge.get_settings())
+
     mainWindow.applyLayerShell()
     // Deliberately NOT announcing the output here: the Screen attached
     // property is not valid until the window has been shown, and the window is
@@ -163,7 +166,7 @@ Window {
     Text {
       id: closeIcon
       text: "✕"
-      font.pointSize: 11
+      font.pointSize: 11 * mainWindow.s
       color: closeMouse.containsMouse ? "#e06c75" : palette.windowText
       anchors.top: parent.top
       anchors.right: ocrIcon.left
@@ -182,7 +185,7 @@ Window {
     Text {
       id: gearIcon
       text: "⚙"
-      font.pointSize: 11
+      font.pointSize: 11 * mainWindow.s
       color: gearMouse.containsMouse ? Qt.hsva(palette.highlight.hsvHue, 0.8, palette.highlight.hsvValue, 1.0) : palette.windowText
       anchors.top: parent.top
       anchors.left: parent.left
@@ -201,7 +204,7 @@ Window {
     Text {
       id: historyIcon
       text: "☰"
-      font.pointSize: 11
+      font.pointSize: 11 * mainWindow.s
       color: historyMouse.containsMouse ? Qt.hsva(palette.highlight.hsvHue, 0.8, palette.highlight.hsvValue, 1.0) : palette.windowText
       anchors.top: parent.top
       anchors.right: parent.right
@@ -220,7 +223,7 @@ Window {
     Text {
       id: ocrIcon
       text: "👁"
-      font.pointSize: 11
+      font.pointSize: 11 * mainWindow.s
       color: mainWindow.ocrActive
         ? Qt.hsva(palette.highlight.hsvHue, 0.8, palette.highlight.hsvValue, 1.0)
         : ocrMouse.containsMouse
@@ -246,7 +249,7 @@ Window {
     Text {
       id: overlayIcon
       text: "▣"
-      font.pointSize: 11
+      font.pointSize: 11 * mainWindow.s
       color: mainWindow.overlayActive || overlayMouse.containsMouse
         ? Qt.hsva(palette.highlight.hsvHue, 0.8, palette.highlight.hsvValue, 1.0)
         : palette.windowText
@@ -275,13 +278,14 @@ Window {
       mainWindow.dragging = true
       mainWindow.dragTarget = "dot"
       var s = mainWindow.dragScale
+      var capsuleGap = Math.round((overlayHint.height - overlayHint.capsuleHeight) / 2 * s)
       bridge.set_drag_style(palette.highlight.toString(),
                             Math.max(1, Math.round(mainWindow.ghostBorder * s)),
                             Math.round(13 * s),
                             mainWindow.ghostFillPct)
-      bridge.start_window_drag(overlayHint.posX, overlayHint.posY,
+      bridge.start_window_drag(overlayHint.posX, overlayHint.posY + capsuleGap,
                                Math.round(overlayHint.width * s),
-                               Math.round(overlayHint.height * s),
+                               Math.round(overlayHint.capsuleHeight * s),
                                Math.round(mx * s), Math.round(my * s))
     }
   }
@@ -511,8 +515,8 @@ Window {
         selectByMouse: true
         wrapMode: TextEdit.Wrap
         color: palette.windowText
-        font.family: "Noto Sans CJK JP"
-        font.pointSize: 11
+        font.family: bridge ? bridge.clipboardFont : "Noto Sans CJK JP"
+        font.pointSize: (bridge ? bridge.clipboardFontSize : 12) * mainWindow.s
 
         property bool shiftHeld: false
         property int hoverIndex: -1
