@@ -163,6 +163,7 @@ class OCRThread:
         self._paused = False
         self._thread = None
         self._region = None
+        self._mask = None
         self._pipeline = None
         self._last_fired = ""
         self._last_regions = []
@@ -184,6 +185,9 @@ class OCRThread:
 
     def set_region(self, region_str):
         self._region = region_str
+
+    def set_mask(self, rect):
+        self._mask = rect
 
     @staticmethod
     def _signature(img):
@@ -224,7 +228,22 @@ class OCRThread:
                 ox, oy = gx, gy
         except Exception as e:
             print("screen_geometry failed during capture:", e)
-        return self._layershell.capture(x + ox, y + oy, w, h)
+        img = self._layershell.capture(x + ox, y + oy, w, h)
+        if img is None or self._mask is None:
+            return img
+        mx, my, mw, mh = self._mask
+        # The mask is output-local logical; the frame is capture-local
+        # physical. Shift by the capture origin, then scale by the ratio the
+        # compositor actually gave us rather than an assumed scale factor.
+        sx = img.shape[1] / w
+        sy = img.shape[0] / h
+        x0 = max(0, int((mx - x) * sx))
+        y0 = max(0, int((my - y) * sy))
+        x1 = min(img.shape[1], int((mx - x + mw) * sx))
+        y1 = min(img.shape[0], int((my - y + mh) * sy))
+        if x1 > x0 and y1 > y0:
+            img[y0:y1, x0:x1] = 0
+        return img
 
     @staticmethod
     def _order_regions(regions):
