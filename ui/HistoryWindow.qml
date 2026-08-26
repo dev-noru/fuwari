@@ -6,7 +6,7 @@ import org.kde.layershell 1.0 as LayerShell
 Window {
     flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint | Qt.WindowDoesNotAcceptFocus
     id: root
-    width: 400 * root.s
+    width: root.baseWidth * root.s
     height: 200 * root.s    
     minimumHeight: 150
     minimumWidth: 150
@@ -15,6 +15,8 @@ Window {
     property var historyData: []
     property int posX: 0
     property int posY: 0
+    property real baseWidth: bridge ? bridge.mainWidth : 400
+    property real baseHeight: bridge ? bridge.mainHeight : 100
     property real s: bridge ? bridge.uiScale : 1.0
     property real fontRatio: (bridge ? bridge.popupFontSize : 11) / 11
     property string popupFontFamily: bridge ? bridge.popupFont : "Noto Sans CJK JP"
