@@ -1,14 +1,20 @@
 # ふわり (Fuwari)
 A native Wayland Japanese popup dictionary for Linux, inspired by [rampaa/JL](https://github.com/rampaa/JL).
 
-![Demo](demo.gif)
+
+
+https://github.com/user-attachments/assets/bf9bd8fa-ce0c-420d-b0a9-509ae6311471
+
+
 
 ## Features
 - Clipboard-based automatic text capture
+- OCR mode — point-and-hover lookups directly off the screen, no per-game text-hook setup required
 - Japanese tokenization via MeCab/fugashi
 - Yomitan-format dictionary support
 - JPDB frequency rankings
 - Anki card mining with AnkiConnect and Local Audio Server support (Anki must be running in the background)
+- Fully customizable window/popup sizing, UI scale, and fonts — applies live, no restart needed
 - Follows your system colour scheme via Qt SystemPalette
 - Native Wayland support (X11 compatible)
 
@@ -134,3 +140,6 @@ X11: Fuwari is built for Wayland and uses wlr-layer-shell for window positioning
 - [rampaa/JL](https://github.com/rampaa/JL) — Inspiration
 - [polm/fugashi](https://github.com/polm/fugashi) — MeCab Python wrapper
 - [MarvNC/jpdb-freq-list](https://github.com/MarvNC/jpdb-freq-list) — Frequency data
+- [rtr46/meikiocr](https://github.com/rtr46/meikiocr) — OCR engine
+- [rtr46/meikipop](https://github.com/rtr46/meikipop) — OCR overlay inspiration
+- [bpwhelan/GameSentenceMiner](https://github.com/bpwhelan/GameSentenceMiner) — OCR overlay inspiration
