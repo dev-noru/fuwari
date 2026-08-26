@@ -7,7 +7,8 @@ Window {
     flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint | Qt.WindowDoesNotAcceptFocus
     id: root
     width: 400 * root.s
-    height: 200 * root.s    minimumHeight: 150
+    height: 200 * root.s    
+    minimumHeight: 150
     minimumWidth: 150
     visible: false
     color: palette.base
