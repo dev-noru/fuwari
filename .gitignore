@@ -18,6 +18,9 @@ pip-delete-this-directory.txt
 
 # Rust (fuwari-layer-shell target)
 fuwari-layer-shell/target/
+target/
+*.zst
+wayland/fuwari-layer-shell/test_capture.png
 
 # AppImage build artifacts
 Fuwari.AppDir/
@@ -50,5 +53,3 @@ leak_test*.py
 # build-appimage.sh, *.py, *.qml, requirements.txt, fuwari.desktop, fuwari.png are tracked
 fuwari-layer-shell/test_capture.png
 tmp/
-heaptrack.*.zst
-leak_test*.py

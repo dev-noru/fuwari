@@ -26,7 +26,7 @@ def old_schema_exists():
 
 
 if not os.path.exists(DB_PATH) or old_schema_exists():
-    from migrate import main as migrate
+    from dictionary.migrate import main as migrate
     migrate()
 
 from bridge import Bridge

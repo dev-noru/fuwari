@@ -10,13 +10,13 @@ import numpy as np
 from PIL import Image
 import sqlite3
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer
-from dictionary import lookup_best, get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, parse_sense, DB_PATH
-from anki import ankiconnect_request
+from dictionary.dictionary import lookup_best, get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, parse_sense, DB_PATH
+from anki.anki import ankiconnect_request
 from settings import settings, save_settings
-from migrate import import_dictionary
+from dictionary.migrate import import_dictionary
 from collections import deque
 import websockets
-from dictionary import cursor
+from dictionary.dictionary import cursor
 import re
 from PySide6.QtGui import QGuiApplication, QCursor, QFontDatabase
 
@@ -247,7 +247,7 @@ class Bridge(QObject):
     def _ls(self):
         """The lazily created LayerShell instance, shared with OCR region select."""
         if getattr(self, "_layershell", None) is None:
-            from layer_shell import LayerShell
+            from wayland.layer_shell import LayerShell
             self._layershell = LayerShell()
         return self._layershell
 
@@ -543,7 +543,7 @@ class Bridge(QObject):
                 # Selection cancelled, so nothing is waiting to be shown.
                 self._pending_overlay = False
                 return
-            from ocr import OCRThread, is_pipeline_loaded, ensure_pipeline_loaded
+            from ocr.ocr import OCRThread, is_pipeline_loaded, ensure_pipeline_loaded
             if not is_pipeline_loaded():
                 self._set_ocr_loading(True)
                 ensure_pipeline_loaded()
