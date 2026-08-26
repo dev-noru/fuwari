@@ -48,7 +48,7 @@ engine = QQmlApplicationEngine()
 engine.rootContext().setContextProperty("bridge", bridge)
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-engine.load(os.path.join(script_dir, 'main.qml'))
+engine.load(os.path.join(script_dir, 'ui', 'main.qml'))
 
 if not engine.rootObjects():
     sys.exit("Failed to load main.qml — see the QML errors above")

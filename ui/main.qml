@@ -2,6 +2,8 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
 import org.kde.layershell 1.0 as LayerShell
+import "../ocr"
+import "../anki"
 
 Window {
   id: mainWindow
