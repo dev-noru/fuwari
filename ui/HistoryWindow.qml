@@ -6,15 +6,17 @@ import org.kde.layershell 1.0 as LayerShell
 Window {
     flags: Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint | Qt.WindowDoesNotAcceptFocus
     id: root
-    width: 400
-    height: 200
-    minimumHeight: 150
+    width: 400 * root.s
+    height: 200 * root.s    minimumHeight: 150
     minimumWidth: 150
     visible: false
     color: palette.base
     property var historyData: []
     property int posX: 0
     property int posY: 0
+    property real s: bridge ? bridge.uiScale : 1.0
+    property real fontRatio: (bridge ? bridge.popupFontSize : 11) / 11
+    property string popupFontFamily: bridge ? bridge.popupFont : "Noto Sans CJK JP"
 
     readonly property bool legacy: bridge ? bridge.legacyWindows : false
 
@@ -104,8 +106,8 @@ Window {
                   anchors.margins: 6
                   width: 20
                   color: palette.windowText
-                  font.family: "Noto Sans CJK JP"
-                  font.pointSize: 11
+                  font.family: root.popupFontFamily
+                  font.pointSize: 11 * root.s * root.fontRatio
               }
               Flow {
                   id: sentenceFlow
@@ -168,8 +170,8 @@ Window {
                               anchors.centerIn: parent
                               text: modelData.surface
                               color: palette.windowText
-                              font.family: "Noto Sans CJK JP"
-                              font.pointSize: 10
+                              font.family: root.popupFontFamily
+                              font.pointSize: 10 * root.s * root.fontRatio
                           }
                       }
                   }
