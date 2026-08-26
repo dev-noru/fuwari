@@ -28,9 +28,8 @@ import time
 import numpy as np
 from PIL import Image
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from ocr import MeikiPipeline  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ocr.ocr import MeikiPipeline
 
 # Downscale before comparing. Enough to notice a line of text changing,
 # small enough that the comparison costs nothing.

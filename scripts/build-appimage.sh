@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ── config ──────────────────────────────────────────────────────────
 APPDIR=Fuwari.AppDir
-SRC="$(pwd)"
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYVER=3.11
 UNIDIC_CACHE="$HOME/.cache/fuwari-unidic"
 BUNDLE_LAYERSHELL=true  # set false once you confirm QML doesn't use LayerShell
@@ -15,7 +15,7 @@ command -v appimagetool >/dev/null || { echo "ERROR: appimagetool missing (AUR: 
 command -v cargo >/dev/null || { echo "ERROR: cargo missing (rustup or pacman: rust)"; exit 1; }
 [ -f "$SRC/requirements.txt" ] || { echo "ERROR: requirements.txt missing"; exit 1; }
 [ -f "$SRC/fuwari.desktop" ]   || { echo "ERROR: fuwari.desktop missing"; exit 1; }
-[ -f "$SRC/fuwari.png" ]       || { echo "ERROR: fuwari.png missing"; exit 1; }
+[ -f "$SRC/assets/fuwari.png" ] || { echo "ERROR: assets/fuwari.png missing"; exit 1; }
 
 # ── 1. fetch + extract the manylinux Python base (old glibc → Deck-safe) ──
 if ! ls python${PYVER}*-manylinux2014_x86_64.AppImage >/dev/null 2>&1; then
@@ -47,19 +47,21 @@ fi
 
 # ── 4. Fuwari source + native layer-shell .so ────────────────────────
 install -d "$APPDIR/opt/fuwari"
-cp "$SRC"/*.py "$SRC"/*.qml "$APPDIR/opt/fuwari/"
+cp "$SRC"/*.py "$APPDIR/opt/fuwari/"
+cp -r "$SRC/ui" "$SRC/dictionary" "$SRC/ocr" "$SRC/anki" "$SRC/wayland" "$APPDIR/opt/fuwari/"
+rm -rf "$APPDIR/opt/fuwari/wayland/fuwari-layer-shell/target"
+# dev-only helpers live in scripts/ and are simply not copied
 # development-only helpers, not part of the app
-rm -f "$APPDIR/opt/fuwari/ocr_boxtest.py" "$APPDIR/opt/fuwari/ocr_cost_test.py"
 
 # build the release .so and bundle it at the path layer_shell.py expects
 echo "Building layer-shell crate (release)..."
-( cd "$SRC/fuwari-layer-shell" && cargo build --release )
-install -d "$APPDIR/opt/fuwari/fuwari-layer-shell/target/release"
-cp "$SRC/fuwari-layer-shell/target/release/libfuwari_layer_shell.so" \
-   "$APPDIR/opt/fuwari/fuwari-layer-shell/target/release/"
-# layer_shell.py CDLLs this path at import, so a miss is a hard crash on start
-[ -f "$APPDIR/opt/fuwari/fuwari-layer-shell/target/release/libfuwari_layer_shell.so" ] \
+( cd "$SRC/wayland/fuwari-layer-shell" && cargo build --release )
+install -d "$APPDIR/opt/fuwari/wayland/fuwari-layer-shell/target/release"
+cp "$SRC/wayland/fuwari-layer-shell/target/release/libfuwari_layer_shell.so" \
+   "$APPDIR/opt/fuwari/wayland/fuwari-layer-shell/target/release/"
+[ -f "$APPDIR/opt/fuwari/wayland/fuwari-layer-shell/target/release/libfuwari_layer_shell.so" ] \
   || { echo "ERROR: libfuwari_layer_shell.so did not land in the AppDir"; exit 1; }
+
 
 # ── 5. wl-paste (clipboard texthook; SteamOS may not ship wl-clipboard) ──
 cp "$(command -v wl-paste)" "$APPDIR/usr/bin/" 2>/dev/null || echo "WARN: wl-paste not bundled"
@@ -171,7 +173,7 @@ chmod +x "$APPDIR/AppRun"
 
 # ── 8. desktop + icon ────────────────────────────────────────────────
 cp "$SRC/fuwari.desktop" "$APPDIR/"
-cp "$SRC/fuwari.png"     "$APPDIR/"
+cp "$SRC/assets/fuwari.png" "$APPDIR/"
 
 # strip the Python base's own desktop entry + icon so they don't win
 rm -f "$APPDIR"/python*.desktop "$APPDIR"/python*.png

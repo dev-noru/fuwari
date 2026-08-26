@@ -169,6 +169,8 @@ class OCRThread:
         self._last_regions = []
         self._last_blocks = []
         self._last_sig = None
+        self._scans = 0
+        self._recognitions = 0
 
     def start(self):
         self._pipeline = _get_pipeline()
@@ -301,6 +303,7 @@ class OCRThread:
                     continue
 
                 sig = self._signature(img)
+                self._scans += 1
                 if (self._last_sig is not None
                         and abs(sig - self._last_sig).mean() < GATE_EPSILON):
                     # Identical pixels, so the text cannot have changed. That
@@ -320,7 +323,13 @@ class OCRThread:
                     continue
                 self._last_sig = sig
 
+                self._recognitions += 1
+                t0 = time.perf_counter()
                 regions = self._pipeline.process(img)
+                print(f"OCR pass #{self._recognitions} "
+                      f"({(time.perf_counter() - t0) * 1000:.0f}ms) "
+                      f"| scans: {self._scans} "
+                      f"| mask: {'on' if self._mask else 'off'}")
                 ordered = self._order_regions(regions)
                 blocks = self._blocks(ordered)
                 text = self._joined(blocks)
