@@ -262,13 +262,13 @@ MAX_MERGE = 5
 
 
 def _terms_exist(surfaces):
-    """Which of these surfaces are in the dictionary? One query, not N."""
+    """Surface -> its dictionary reading, for the surfaces that exist."""
     if not surfaces:
-        return set()
+        return {}
     q = ','.join('?' * len(surfaces))
     cur = _cursor()
-    cur.execute(f'SELECT DISTINCT term FROM terms WHERE term IN ({q})', surfaces)
-    return {row[0] for row in cur.fetchall()}
+    cur.execute(f'SELECT term, reading FROM terms WHERE term IN ({q})', surfaces)
+    return {row[0]: row[1] for row in cur.fetchall()}
 
 
 def _merge(words, sentence):
@@ -291,7 +291,7 @@ def _merge(words, sentence):
                     'surface': surface,
                     'lemma': surface,
                     'candidates': [surface],
-                    'reading': '',
+                    'reading': found.get(surface, ''),
                     'pos': '',
                     'start': words[i]['start'],
                     'end': words[i + n - 1]['end'],

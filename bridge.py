@@ -26,6 +26,11 @@ DRAG_TIMEOUT_MS = 30000
 # Skip characters during OCR:
 _SKIP_CHARS = '「」『』（）〈〉《》【】、。！？…・'
 
+# Yomitan writes a spelling variant that has no definition of its own as a
+# bare arrow pointing at the spelling that does. On its own it tells the
+# reader nothing, so follow it rather than showing the pointer.
+_REDIRECT_ARROW = '\u27f6'
+
 POS_LABELS = {
     'v1': 'Ichidan verb',
     'v5': 'Godan verb',
@@ -1123,7 +1128,7 @@ class Bridge(QObject):
               f"cands={cands} -> {entries[0]['term'] if entries else 'none'}")
         return self._lookup_entries(entries or None, w['lemma'])
 
-    def _lookup_entries(self, entries, word):
+    def _lookup_entries(self, entries, word, _following=False):
         print(word)
         try:
             word = word.split('-')[0]
@@ -1174,6 +1179,18 @@ class Bridge(QObject):
                         # flat form kept for Anki mining
                         'Definitions': [f"{s['num']}.) {s['glosses']}" for s in senses],
                     })
+
+            # JMdict gives a spelling variant no definition of its own, just a
+            # pointer at the spelling that has one. Showing an arrow and a word
+            # tells the reader nothing, so follow it once.
+            if results and all(
+                    len(r['Senses']) == 1
+                    and r['Senses'][0]['glosses'].startswith(_REDIRECT_ARROW)
+                    for r in results):
+                parts = results[0]['Senses'][0]['glosses'].split('; ')
+                target = parts[-1].strip() if len(parts) > 1 else ''
+                if target and target != word and not _following:
+                    return self._lookup_entries(None, target, _following=True)
 
             entry = kanji_dict(word)
             if len(word) == 1 and entry:
