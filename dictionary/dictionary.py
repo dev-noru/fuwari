@@ -3,13 +3,27 @@ import json
 from fugashi import Tagger
 import unidic
 import sqlite3
+import threading
 
+_local = threading.local()
 
 tagger = Tagger('-d ' + unidic.DICDIR)
 
 DB_PATH = os.path.expanduser('~/.local/share/fuwari/fuwari.db')
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
+
+def _cursor():
+    """A cursor owned by the calling thread.
+
+    SQLite objects cannot cross threads, and the module-level cursor belongs
+    to whichever thread imported this module. tokenize() runs on the clipboard
+    watcher, so it needs its own -- sharing one would also race on fetch,
+    since execute and fetchall are not atomic together.
+    """
+    if not hasattr(_local, 'conn'):
+        _local.conn = sqlite3.connect(DB_PATH)
+    return _local.conn.cursor()
 
 # Looks up dictionary entries from the database
 def lookup_term(term):
@@ -242,6 +256,52 @@ def _candidates(word):
                 out.append(alt)
     return out
 
+# Longest merge to attempt. 5 covers 図書館情報学科 and どうしようもない
+# without checking combinations nobody would look up.
+MAX_MERGE = 5
+
+
+def _terms_exist(surfaces):
+    """Which of these surfaces are in the dictionary? One query, not N."""
+    if not surfaces:
+        return set()
+    q = ','.join('?' * len(surfaces))
+    cur = _cursor()
+    cur.execute(f'SELECT DISTINCT term FROM terms WHERE term IN ({q})', surfaces)
+    return {row[0] for row in cur.fetchall()}
+
+
+def _merge(words, sentence):
+    """Fold adjacent short-unit tokens into the longest form the dictionary
+    knows. UniDic splits at morpheme boundaries, which is finer than what a
+    dictionary lookup wants: 学生証 arrives as 学生 + 証, and looking up
+    either half separately is not what the reader asked about.
+    """
+    out = []
+    i = 0
+    while i < len(words):
+        # Every merge starting here, longest first.
+        cands = []
+        for n in range(min(MAX_MERGE, len(words) - i), 1, -1):
+            cands.append((n, sentence[words[i]['start']:words[i + n - 1]['end']]))
+        found = _terms_exist([c[1] for c in cands])
+        for n, surface in cands:
+            if surface in found:
+                out.append({
+                    'surface': surface,
+                    'lemma': surface,
+                    'candidates': [surface],
+                    'reading': '',
+                    'pos': '',
+                    'start': words[i]['start'],
+                    'end': words[i + n - 1]['end'],
+                })
+                i += n
+                break
+        else:
+            out.append(words[i])
+            i += 1
+    return out
 
 def tokenize(sentence):
     words = []
@@ -265,4 +325,8 @@ def tokenize(sentence):
             'start': start,
             'end': end,
         })
-    return words
+    try:
+        return _merge(words, sentence)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return words

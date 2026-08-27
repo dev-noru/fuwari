@@ -23,6 +23,8 @@ from PySide6.QtGui import QGuiApplication, QCursor, QFontDatabase
 # Give up if the crate never answers (e.g. the overlay was killed).
 DRAG_TIMEOUT_MS = 30000
 
+# Skip characters during OCR:
+_SKIP_CHARS = '「」『』（）〈〉《》【】、。！？…・'
 
 POS_LABELS = {
     'v1': 'Ichidan verb',
@@ -609,6 +611,8 @@ class Bridge(QObject):
                 ti = token_of[i]
                 # A character the tokenizer didn't cover has no word to look up.
                 if ti < 0:
+                    continue
+                if c.char in _SKIP_CHARS:
                     continue
                 bx, by, bw, bh = c.box
                 regions.append((
