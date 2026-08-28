@@ -242,14 +242,14 @@ class Bridge(QObject):
         nothing until that surface renders again.
         """
         if win is not None:
-            win.requestUpdate()
+            win.update()
 
     @Slot()
     def nudge(self):
         """Layer-shell margins are double-buffered and only take effect on the
         next wl_surface.commit, which Qt only sends when it renders a frame."""
         if getattr(self, "_window", None) is not None:
-            self._window.requestUpdate()
+            self._window.update()
 
     def _ls(self):
         """The lazily created LayerShell instance, shared with OCR region select."""
