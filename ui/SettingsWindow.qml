@@ -21,6 +21,7 @@ Window {
             dictTab.load()
             generalTab.load()
             customizationTab.load()
+            ocrTab.load()
         }
     }
 
@@ -104,6 +105,24 @@ Window {
                 }
             }
         }
+          TabButton {
+            text: "OCR"
+            contentItem: Text {
+                text: parent.text
+                color: palette.windowText
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            background: Rectangle {
+                color: palette.base
+                Rectangle {
+                    width: parent.width
+                    height: 2
+                    anchors.top: parent.top
+                    color: tabBar.currentIndex === 4 ? palette.highlight : "transparent"
+                }
+            }
+        }
 
     }
 
@@ -133,6 +152,11 @@ Window {
 
         CustomizationTab {
             id: customizationTab
+            width: parent.width
+            height: parent.height
+        }
+          OcrTab {
+            id: ocrTab
             width: parent.width
             height: parent.height
         }

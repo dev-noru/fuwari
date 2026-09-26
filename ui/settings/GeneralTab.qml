@@ -72,7 +72,7 @@ Item {
             text: "The window manager handles moving and placing Fuwari, as it " +
                   "did before layer-shell. Fuwari will no longer float above " +
                   "fullscreen games. Takes effect on restart."
-            color: palette.mid
+            color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.6)
             wrapMode: Text.WordWrap
             width: parent.width
             font.pixelSize: 11
@@ -98,7 +98,7 @@ Item {
         Text {
             text: "Takes effect next time Fuwari starts. Wayland does not let an " +
                   "application move itself between monitors once open."
-            color: palette.mid
+            color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.6)
             wrapMode: Text.WordWrap
             width: parent.width
             font.pixelSize: 11
