@@ -23,6 +23,32 @@ from PySide6.QtGui import QGuiApplication, QCursor, QFontDatabase
 # Give up if the crate never answers (e.g. the overlay was killed).
 DRAG_TIMEOUT_MS = 30000
 
+# How many times to reopen the share dialog after a wrong choice before giving up.
+PORTAL_ATTEMPTS = 3
+
+# Older versions saved scan speed and stale-screen sensitivity as preset
+# names rather than numbers. Kept so a choice saved back then still means the
+# same thing now.
+OCR_SCAN_INTERVALS = {'fast': 0.25, 'normal': 0.5, 'slow': 1.0}
+OCR_STALE_EPSILONS = {'sensitive': 1.0, 'normal': 2.0, 'relaxed': 4.0}
+
+
+def _ocr_number(key, default, lo, hi, legacy_key=None, legacy_map=None):
+    """An OCR tab number from settings, kept to a sane range.
+
+    Falls back to the old preset name when no number has been saved yet. The
+    range guard means a hand-edited settings file cannot switch recognition
+    off or set a scan interval of zero.
+    """
+    value = settings.get(key)
+    if value is None and legacy_key:
+        value = (legacy_map or {}).get(settings.get(legacy_key), default)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return default
+    return min(hi, max(lo, value))
+
 # Skip characters during OCR:
 _SKIP_CHARS = '「」『』（）〈〉《》【】、。！？…・'
 
@@ -149,7 +175,12 @@ class Bridge(QObject):
     # Bounding box of all recognised text, in compositor logical pixels, so a
     # popup can be placed clear of every line rather than just the hovered word.
     ocrBoundsChanged = Signal(int, int, int, int)
-
+    # A message for the user about OCR, e.g. that the wrong screen was shared.
+    ocrMessage = Signal(str)
+    # UniDic download: installed state, progress in MB, and the outcome.
+    unidicChanged = Signal()
+    unidicProgress = Signal(float, float)
+    unidicDownloadFinished = Signal(bool, str)
 
     def __init__(self):
         super().__init__()
@@ -166,7 +197,7 @@ class Bridge(QObject):
         # resolved back to a word and its rectangle.
         self._ocr_regions = []
         self._ocr_words = []
-        self._ocr_hover_last = -1
+        self._ocr_hover_last = None
         self._overlay_active = False
         # Set on the OCR worker thread, consumed by the hover timer on the Qt
         # thread: the overlay must not come up until the region is chosen, and
@@ -184,6 +215,10 @@ class Bridge(QObject):
         # token index -> (rect on screen, rect in the captured frame)
         self._ocr_tokens = {}
         self._ocr_token_block = {}
+        # token index -> its character boxes in the captured frame, so a word
+        # that wraps onto the next line is highlighted glyph by glyph rather
+        # than as one rectangle spanning both lines
+        self._ocr_token_chars = {}
         self._ocr_scale = (1.0, 1.0)
         self._ocr_origin = (0, 0)
         self._highlight_rgb = (255, 190, 60)
@@ -483,6 +518,12 @@ class Bridge(QObject):
             try:
                 time.sleep(0.1)
                 result = subprocess.run(clipboard_cmd, capture_output=True, text=True)
+                # A failed read is not the clipboard changing. Its empty output
+                # used to count as new text, and the next good read as new
+                # again, so every hiccup re-sent the stale clipboard over
+                # whatever OCR had just shown.
+                if result.returncode != 0 or not result.stdout.strip():
+                    continue
                 if result_check != result.stdout:
                     self.process_clipboard(result.stdout)
                     result_check = result.stdout
@@ -545,22 +586,102 @@ class Bridge(QObject):
 
         def start_ocr():
             layershell = self._ls()
+            from ocr.portal import portal_needed
+            portal = None
+            # Share dialog first, then region select: the region is cut out of
+            # the shared screen, so there is nothing to select from until the
+            # user has picked one.
+            if portal_needed():
+                portal = self._start_portal(layershell)
+                if portal is None:
+                    self._pending_overlay = False
+                    return
             region = layershell.select_region()
             if not region:
                 # Selection cancelled, so nothing is waiting to be shown.
                 self._pending_overlay = False
+                if portal is not None:
+                    portal.stop()
                 return
             from ocr.ocr import OCRThread, is_pipeline_loaded, ensure_pipeline_loaded
             if not is_pipeline_loaded():
                 self._set_ocr_loading(True)
                 ensure_pipeline_loaded()
                 self._set_ocr_loading(False)
-            self._ocr = OCRThread(self.process_clipboard, layershell,
-                                  on_geometry=self._on_ocr_geometry)
+            self._ocr = OCRThread(
+                self.process_clipboard, layershell,
+                on_geometry=self._on_ocr_geometry,
+                portal=portal,
+                on_stale=self._on_ocr_stale,
+                # Read here, at OCR start, from bridge's own settings: that is
+                # the copy save_settings_slot updates, so a change applies from
+                # the next start without restarting Fuwari.
+                scan_interval=_ocr_number('ocr_scan_interval', 0.5, 0.1, 2.0,
+                                          'ocr_scan_speed', OCR_SCAN_INTERVALS),
+                stale_epsilon=_ocr_number('ocr_stale_epsilon', 2.0, 0.5, 10.0,
+                                          'ocr_stale_sensitivity', OCR_STALE_EPSILONS),
+                join_lines=settings.get('ocr_join_lines', True) is not False,
+                min_char_conf=_ocr_number('ocr_char_confidence', 0.25, 0.0, 0.9),
+            )
             self._ocr.set_region(region)
             self._ocr.start()
 
         threading.Thread(target=start_ocr, daemon=True).start()
+
+    def _start_portal(self, layershell):
+        """Get the user to share the screen Fuwari is on.
+
+        Reopens the dialog if they share a region or another monitor, since
+        the OCR region is cropped out of this stream and either would break it.
+        Returns None if they cancel or it cannot be done.
+        """
+        from ocr.portal import PortalCapture, PortalCancelled, PortalWrongSource
+        expected = None
+        try:
+            _, _, w, h, valid = layershell.screen_geometry()
+            if valid:
+                expected = (w, h)
+        except Exception as e:
+            print("screen_geometry failed before screen share:", e)
+
+        for _ in range(PORTAL_ATTEMPTS):
+            portal = PortalCapture()
+            try:
+                portal.start(expected_size=expected)
+                return portal
+            except PortalWrongSource as e:
+                print(f"portal: wrong source ({e}); asking again")
+                self.ocrMessage.emit(
+                    "Please share the whole screen Fuwari is on, "
+                    "not a region or another monitor.")
+            except PortalCancelled:
+                print("screen share cancelled; OCR not started")
+                portal.stop()
+                return None
+            except Exception as e:
+                print("portal capture failed:", e)
+                self.ocrMessage.emit(f"Screen capture failed: {e}")
+                portal.stop()
+                return None
+        self.ocrMessage.emit("Screen share was not set up, so OCR did not start.")
+        return None
+
+    @Slot(result=bool)
+    def reset_portal_selection(self):
+        """Forget the shared screen, so the next OCR start asks again.
+
+        A session that is already running keeps going; this only affects
+        the next start.
+        """
+        from ocr.portal import forget_selection
+        return forget_selection()
+
+    @Property(bool, constant=True)
+    def usesPortal(self):
+        """Whether OCR captures through the screen share portal here, so the
+        settings window only shows the reset option where it means something."""
+        from ocr.portal import portal_needed
+        return portal_needed()
 
     def _on_ocr_geometry(self, blocks, origin, logical, image):
         """Put character boxes back on the screen as overlay input regions.
@@ -601,6 +722,7 @@ class Bridge(QObject):
         # rather than the whole screen -- which matters once the capture is a
         # whole screen rather than one textbox.
         block_of = {}
+        char_boxes = {}
         for text, chars in blocks:
             if not text:
                 continue
@@ -628,6 +750,7 @@ class Bridge(QObject):
                     ti,
                 ))
                 _grow(phys, ti, bx, by, bx + bw, by + bh)
+                char_boxes.setdefault(ti, []).append(c.box)
                 block_of[ti] = block_id
 
         regions = self._close_gaps(regions)
@@ -650,12 +773,21 @@ class Bridge(QObject):
             ti: _rect(blocks_box[bid]) for ti, bid in block_of.items()
             if bid in blocks_box
         }
+        self._ocr_token_chars = char_boxes
 
         self._ocr_regions = regions
         self._ocr_words = words
         self._ocr_frame = image
         self._ocr_scale = (sx, sy)
         self._ocr_origin = (ox, oy)
+        # The token numbers are about to change, so a highlight or popup for
+        # the old ones would outlive the word they were drawn for. The reset
+        # below also throws away an exit that is still waiting out its dwell,
+        # so the hover has to be ended here rather than left to that exit.
+        if self._ocr_hover_last not in (None, -1):
+            ls.clear_highlight()
+            self._set_ocr_highlighting(False)
+            self.ocrHoverEnded.emit()
         self._reset_hover()
         if logical:
             bx0 = min(b[0] for b in logical.values())
@@ -756,13 +888,32 @@ class Bridge(QObject):
         value = mx / 255.0
         sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1.0), 0.0)
 
-        lo = np.percentile(value, GLYPH_DARK_PCT)
-        hi = np.percentile(value, GLYPH_INK_PCT)
+        # Only the token's own glyphs. A word that wraps has a bounding rect
+        # spanning both lines, and everything bright inside it would otherwise
+        # be tinted along with it. One pixel of padding keeps antialiased edges.
+        fx = lw / (px1 - px0)
+        fy = lh / (py1 - py0)
+        mask = np.zeros((lh, lw), dtype=bool)
+        for bx, by, bw, bh in self._ocr_token_chars.get(index, ()):
+            mx0 = max(0, int((bx - px0) * fx) - 1)
+            my0 = max(0, int((by - py0) * fy) - 1)
+            mx1 = min(lw, int(np.ceil((bx + bw - px0) * fx)) + 1)
+            my1 = min(lh, int(np.ceil((by + bh - py0) * fy)) + 1)
+            mask[my0:my1, mx0:mx1] = True
+        if not mask.any():
+            print(f"glyph mask: token {index} "
+                  f"boxes={len(self._ocr_token_chars.get(index, ()))} "
+                  f"coverage={mask.mean():.0%}")
+            mask[:] = True
+
+        lo = np.percentile(value[mask], GLYPH_DARK_PCT)
+        hi = np.percentile(value[mask], GLYPH_INK_PCT)
         alpha = (value - lo) / max(1e-6, hi - lo)
         # The dark outline the game draws round its text is low alpha here, so
         # it survives untinted and keeps the glyph legible whatever colour the
         # palette supplies and whatever is behind it.
         alpha *= 1.0 - np.clip(sat / GLYPH_SAT_MAX, 0.0, 1.0)
+        alpha *= mask
         np.clip(alpha, 0.0, 1.0, out=alpha)
 
         r, g, b = self._highlight_rgb
@@ -776,9 +927,36 @@ class Bridge(QObject):
         return lx, ly, lw, lh, out.tobytes()
 
     def _reset_hover(self):
-        self._ocr_hover_last = -1
+        # None rather than -1: -1 is a real event (the pointer left a word).
+        # Resetting to it made the next genuine exit look like a repeat, so it
+        # was dropped and the highlight and popup stayed up.
+        self._ocr_hover_last = None
         self._hover_candidate = None
         self._hover_since = 0.0
+
+    def _set_ocr_highlighting(self, on, rect=None):
+        """Hold OCR while the highlight is on screen, so it never reads it."""
+        ocr = self._ocr
+        if ocr is not None:
+            ocr.set_highlighting(on, rect)
+
+    def _on_ocr_stale(self):
+        """The screen changed under the highlight: drop the old screen's state.
+
+        Called on the OCR thread, like _on_ocr_geometry.
+        """
+        ls = self._ls()
+        ls.clear_highlight()
+        self._set_ocr_highlighting(False)
+        # These boxes and tokens describe a screen that is gone. Leaving them
+        # would keep looking up old words under the pointer and raising the
+        # highlight again, which is the loop this is here to break.
+        self._ocr_regions = []
+        self._ocr_tokens = {}
+        if self._overlay_active:
+            ls.set_regions([])
+        self._reset_hover()
+        self.ocrHoverEnded.emit()
 
     def _poll_ocr_hover(self):
         if self._pending_overlay:
@@ -807,6 +985,7 @@ class Bridge(QObject):
         if index < 0:
             print("ocr hover: out")
             self._layershell.clear_highlight()
+            self._set_ocr_highlighting(False)
             self.ocrHoverEnded.emit()
             return
         if index >= len(self._ocr_words):
@@ -834,9 +1013,13 @@ class Bridge(QObject):
             print("glyph patch failed:", e)
             patch = None
         if patch:
+            # Hold OCR first: the other way round, a scan could land in the
+            # moment the highlight is up but OCR has not been told.
+            self._set_ocr_highlighting(True, entry[1])
             self._layershell.set_highlight(*patch)
         else:
             self._layershell.clear_highlight()
+            self._set_ocr_highlighting(False)
         self.ocrHovered.emit(index, x0, y0, x1 - x0, y1 - y0, lemma)
 
     def _get_overlay_active(self):
@@ -870,6 +1053,7 @@ class Bridge(QObject):
             self.ocrBoundsChanged.emit(*self._ocr_bounds)
         else:
             ls.clear_highlight()
+            self._set_ocr_highlighting(False)
             ls.set_regions([])
             ls.hide()
             self.ocrHoverEnded.emit()
@@ -937,6 +1121,40 @@ class Bridge(QObject):
         conn.close()
         print(f"has_dictionaries: {count}")
         return count > 0
+
+    @Property(bool, notify=unidicChanged)
+    def unidicReady(self):
+        from dictionary.unidic_setup import is_installed
+        return is_installed()
+
+    @Slot()
+    def download_unidic(self):
+        """Download UniDic in the background, reporting progress to QML."""
+        thread = getattr(self, '_unidic_thread', None)
+        if thread is not None and thread.is_alive():
+            return
+        from dictionary.unidic_setup import download
+        last_mb = [-1]
+
+        def progress(done, total):
+            # One update per MB is plenty for a progress bar.
+            mb = done >> 20
+            if mb != last_mb[0]:
+                last_mb[0] = mb
+                self.unidicProgress.emit(done / 1048576, total / 1048576)
+
+        def run():
+            try:
+                download(progress)
+            except Exception as e:
+                print("UniDic download failed:", e)
+                self.unidicDownloadFinished.emit(False, str(e))
+                return
+            self.unidicChanged.emit()
+            self.unidicDownloadFinished.emit(True, "")
+
+        self._unidic_thread = threading.Thread(target=run, daemon=True)
+        self._unidic_thread.start()
 
     @Slot(result=str)
     def get_history(self):
