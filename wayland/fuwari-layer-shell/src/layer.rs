@@ -660,6 +660,11 @@ impl OverlayState {
             buffer.attach_to(layer_surface.wl_surface()).expect("buffer attach");
             layer_surface.wl_surface().commit();
         }
+        // Kept for the next draw to reuse once the compositor releases it.
+        // Without this every highlight change allocated a fresh screen-sized
+        // buffer, since reusable was always None.
+        self.buffer = Some(buffer);
+        self.buffer_dims = (width, height);
     }
 
     // --- Region select surface methods ---
