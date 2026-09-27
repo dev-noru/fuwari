@@ -5,7 +5,6 @@ set -euo pipefail
 APPDIR=Fuwari.AppDir
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYVER=3.11
-UNIDIC_CACHE="$HOME/.cache/fuwari-unidic"
 BUNDLE_LAYERSHELL=true  # set false once you confirm QML doesn't use LayerShell
 
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt  # manylinux py needs this for TLS
@@ -33,17 +32,6 @@ PYBIN=$(ls "$APPDIR"/opt/python*/bin/python3.* | grep -E 'python3\.[0-9]+$' | he
 
 # ── 2. dependencies ──────────────────────────────────────────────────
 "$PYBIN" -m pip install --no-warn-script-location -r requirements.txt
-
-# ── 3. UniDic dictionary (cache it so rebuilds don't re-download ~1GB) ──
-DICDIR="$("$PYBIN" -c 'import unidic; print(unidic.DICDIR)')"
-if [ -d "$UNIDIC_CACHE" ] && [ -n "$(ls -A "$UNIDIC_CACHE" 2>/dev/null)" ]; then
-  echo "Restoring cached UniDic..."
-  cp -rT "$UNIDIC_CACHE" "$DICDIR"
-else
-  echo "Downloading UniDic (~1GB, first build only)..."
-  "$PYBIN" -m unidic download
-  mkdir -p "$UNIDIC_CACHE"; cp -rT "$DICDIR" "$UNIDIC_CACHE"
-fi
 
 # ── 4. Fuwari source + native layer-shell .so ────────────────────────
 install -d "$APPDIR/opt/fuwari"

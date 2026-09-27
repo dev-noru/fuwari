@@ -370,8 +370,8 @@ Window {
   FirstRunWindow {
     id: firstWindow
     Component.onCompleted: {
-      if (!bridge.has_dictionaries()) {
-        firstWindow.visible = false
+      if (!bridge.has_dictionaries() || !bridge.unidicReady) {
+          firstWindow.visible = true
       }
     }
   }
@@ -403,6 +403,13 @@ Window {
       else if (definitionWindow.visible)
         hideTimer.restart()
     }
+  }
+
+  Connections {
+      target: bridge
+      function onOcrMessage(message) {
+          console.log("OCR:", message)
+      }
   }
 
   Connections {

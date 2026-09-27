@@ -1,13 +1,38 @@
 import os
 import json
-from fugashi import Tagger
-import unidic
+from fugashi import GenericTagger, create_feature_wrapper
 import sqlite3
 import threading
+from dictionary.unidic_setup import mecab_args
 
 _local = threading.local()
 
-tagger = Tagger('-d ' + unidic.DICDIR)
+
+# UniDic 3.1's 29 feature columns, by name, so word.feature.lemma and the
+# rest work. GenericTagger rather than Tagger: Tagger goes looking for a
+# pip-installed `unidic` on its own, even when told which dictionary to use,
+# and a half-removed one made it crash on every sentence.
+UnidicFeatures = create_feature_wrapper('UnidicFeatures', (
+    'pos1 pos2 pos3 pos4 cType cForm lForm lemma orth pron orthBase '
+    'pronBase goshu iType iForm fType fForm iConType fConType type kana '
+    'kanaBase form formBase aType aConType aModType lid lemma_id').split())
+# Created on first use, not at import: on a fresh install UniDic has not been
+# downloaded yet when Fuwari starts, and a tagger built without it fails.
+_tagger = None
+_tagger_lock = threading.Lock()
+
+
+def _get_tagger():
+    """The shared tagger, or None while UniDic is still missing."""
+    global _tagger
+    if _tagger is None:
+        with _tagger_lock:
+            if _tagger is None:
+                args = mecab_args()
+                if args is None:
+                    return None
+                _tagger = GenericTagger(args, wrapper=UnidicFeatures)
+    return _tagger
 
 DB_PATH = os.path.expanduser('~/.local/share/fuwari/fuwari.db')
 conn = sqlite3.connect(DB_PATH)
@@ -283,6 +308,11 @@ def _merge(words, sentence):
         # Every merge starting here, longest first.
         cands = []
         for n in range(min(MAX_MERGE, len(words) - i), 1, -1):
+            # Never end a merge on the particle の. Some dictionaries have
+            # entries like 水の or てるの, but the reader hovering 水 wants 水.
+            last = words[i + n - 1]
+            if last['surface'] == 'の' and last.get('pos') == '助詞':
+                continue
             cands.append((n, sentence[words[i]['start']:words[i + n - 1]['end']]))
         found = _terms_exist([c[1] for c in cands])
         for n, surface in cands:
@@ -304,6 +334,11 @@ def _merge(words, sentence):
     return out
 
 def tokenize(sentence):
+    tagger = _get_tagger()
+    if tagger is None:
+        # No UniDic yet: nothing can be split into words until the
+        # first-run download is done.
+        return []
     words = []
     cursor = 0
     for word in tagger(sentence):

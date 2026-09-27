@@ -1,7 +1,6 @@
-PySide6
+PySide6-Essentials
 meikiocr
 websockets
 Pillow
 numpy
 fugashi
-unidic
