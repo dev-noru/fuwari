@@ -12,6 +12,7 @@ import sqlite3
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer
 from dictionary.dictionary import lookup_best, get_dictionaries, toggle_dictionary, reorder_dictionary, delete_dictionary, tokenize, dictionary, frequency, kanji_dict, parse_structured_content, parse_sense, DB_PATH
 from anki.anki import ankiconnect_request
+from anki.recorder import AudioBuffer, RATE as AUDIO_RATE, clip_peaks, export_clip, new_media_path
 from settings import settings, save_settings
 from dictionary.migrate import import_dictionary
 from collections import deque
@@ -235,6 +236,16 @@ class Bridge(QObject):
         self._screen_y = 0
         self._screen_valid = False
         self._output_name = ""
+
+        # Sentence audio: the rolling buffer, plus the clip frozen out of it
+        # when a card is opened, so audio that keeps playing while the card is
+        # being edited does not shift what was selected.
+        self._audio = AudioBuffer()
+        self._clip = None
+        # Set while a card screenshot is being taken, so a word under the
+        # pointer cannot bring the popup or highlight back into the shot.
+        self._hover_suspended = False
+        self._apply_sentence_audio_settings()
 
         self._drag_timer = QTimer(self)
         self._drag_timer.setInterval(16)          # ~60Hz, matches the ghost redraw
@@ -964,6 +975,8 @@ class Bridge(QObject):
                 self._pending_overlay = False
                 self.set_overlay_active(True)
             return
+        if self._hover_suspended:
+            return
         if not self._overlay_active or self._layershell is None:
             return
         polled = self._layershell.poll_hover()
@@ -1312,11 +1325,99 @@ class Bridge(QObject):
             print(f"Store media error: {e}")
             return ""
 
+    # --- Sentence audio and screenshots for cards ----------------------------
+
+    def _apply_sentence_audio_settings(self):
+        """Start, resize or stop the rolling audio buffer to match settings."""
+        if settings.get('sentence_audio_buffer', False):
+            self._audio.start(settings.get('sentence_audio_seconds', 20))
+        else:
+            self._audio.stop()
+            self._clip = None
+
+    @Slot(result=bool)
+    def snapshot_sentence_audio(self):
+        """Freeze the buffer for the card being opened. False when it is off."""
+        self._clip = self._audio.snapshot() if self._audio.running else None
+        return self._clip is not None
+
+    @Slot(result=float)
+    def sentence_audio_length(self):
+        """Length of the frozen clip in seconds."""
+        return 0.0 if self._clip is None else len(self._clip) / AUDIO_RATE
+
+    @Slot(int, result="QVariantList")
+    def sentence_audio_peaks(self, count):
+        """Bar heights (0..1) for drawing the frozen clip's waveform."""
+        return clip_peaks(self._clip, count)
+
+    @Slot(float, float, result=str)
+    def export_sentence_audio(self, start, end):
+        """Write the part between start and end (0..1) to a file; its path."""
+        return export_clip(self._clip, start, end)
+
+    @Slot()
+    def prepare_screenshot(self):
+        """Take Fuwari's own drawing off the screen before a card screenshot.
+
+        QML hides the popup itself; this drops the glyph highlight and holds
+        hover so the word under the pointer cannot raise either again before
+        the shot is taken.
+        """
+        self._hover_suspended = True
+        if self._layershell is not None:
+            self._layershell.clear_highlight()
+        self._set_ocr_highlighting(False)
+        self._reset_hover()
+
+    @Slot(result=str)
+    def take_screenshot(self):
+        """Capture the monitor Fuwari is on; the saved JPEG's path, or ""."""
+        try:
+            frame = self._grab_screen()
+        except Exception as e:
+            print(f"screenshot failed: {e}")
+            frame = None
+        finally:
+            self._hover_suspended = False
+        if frame is None:
+            return ""
+        img = Image.fromarray(frame)
+        # Anki shows these at card size; full 4K frames only bloat the
+        # collection.
+        img.thumbnail((1280, 1280))
+        path = new_media_path('.jpg')
+        img.convert('RGB').save(path, 'JPEG', quality=85)
+        return path
+
+    def _grab_screen(self):
+        """The whole output as an RGB array, by whichever route OCR uses here."""
+        if not self.isWayland:
+            from PIL import ImageGrab
+            return np.asarray(ImageGrab.grab().convert('RGB'))
+        ls = self._ls()
+        gx, gy, sw, sh, valid = ls.screen_geometry()
+        if not valid:
+            print("screenshot: output geometry not known yet")
+            return None
+        portal = getattr(self._ocr, '_portal', None)
+        if portal is not None:
+            # KDE/GNOME: reuse the screen share OCR already has open.
+            return portal.grab_region(0, 0, sw, sh, (sw, sh))
+        from ocr.portal import portal_needed
+        if portal_needed():
+            print("screenshot: this desktop only allows capture through the "
+                  "screen share portal, which is open only while OCR runs")
+            return None
+        # grim wants global layout coordinates, hence the output origin.
+        return ls.capture(gx, gy, sw, sh)
+
     @Slot(str)
     def save_settings_slot(self, settings_json):
         global settings
         settings = json.loads(settings_json)
         save_settings(settings)
+        self._apply_sentence_audio_settings()
         self.mainSizeChanged.emit()
         self.defSizeChanged.emit()
         self.uiScaleChanged.emit()

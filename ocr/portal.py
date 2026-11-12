@@ -4,30 +4,32 @@ For compositors without wlr-screencopy (KWin, Mutter), grim has nothing to
 talk to. The portal instead hands back a PipeWire stream of a whole monitor,
 after the user approves it once.
 
-Frames only arrive when the screen changes, so the newest one is kept and
-handed out again while the screen is still. The OCR loop's frame gate already
-expects a still screen to repeat itself, so this costs nothing downstream.
+No PyGObject: it only installs by compiling against the system's GObject
+libraries, so it cannot be bundled in the AppImage. The portal handshake uses
+jeepney, a pure-Python D-Bus library, and frames come from the system's own
+GStreamer run as a helper process, writing raw pixels down a pipe. Only that
+helper needs anything from the system, and only on desktops that use the
+portal at all.
 """
 from __future__ import annotations
 
 import os
+import re
 import secrets
+import shutil
+import subprocess
 import threading
 import time
 
 import numpy as np
 
-# Optional: only KWin and Mutter need the portal, and PyGObject plus the
-# GStreamer typelibs are not installed everywhere. Failing here would take OCR
-# down on wlroots compositors, where none of this is used.
 try:
-    import gi
-    gi.require_version('Gst', '1.0')
-    from gi.repository import Gio, GLib, Gst
-    _GI_ERROR = None
-except (ImportError, ValueError) as e:
-    Gio = GLib = Gst = None
-    _GI_ERROR = e
+    from jeepney import (DBusAddress, MatchRule, MessageType, message_bus,
+                         new_method_call)
+    from jeepney.io.blocking import Proxy, open_dbus_connection
+    _JEEPNEY_ERROR = None
+except ImportError as e:
+    _JEEPNEY_ERROR = e
 
 BUS_NAME = 'org.freedesktop.portal.Desktop'
 OBJECT_PATH = '/org/freedesktop/portal/desktop'
@@ -44,11 +46,43 @@ PERSIST_UNTIL_REVOKED = 2
 # Every call but Start answers at once; Start waits on the user.
 QUICK_TIMEOUT = 10.0
 DIALOG_TIMEOUT = 120.0
-FIRST_FRAME_TIMEOUT = 3.0
+FIRST_FRAME_TIMEOUT = 5.0
+
+# Frames per second the helper passes on. Fuwari only looks at the newest
+# frame when it scans, so anything beyond that is thrown away inside the
+# helper instead of being copied down the pipe. Four keeps a fresh frame ready
+# even on the Fast scan setting (every 0.25s).
+HELPER_MAX_FPS = 4
+
+# The GStreamer elements the helper pipeline uses, checked before starting so
+# a missing plugin gives a clear message rather than a stalled capture.
+REQUIRED_ELEMENTS = ('pipewiresrc', 'videorate', 'videoconvert', 'fdsink')
 
 # Kept apart from settings.json: the QML settings window saves that whole file
 # from its own copy, which would drop a token written here in the meantime.
 TOKEN_PATH = os.path.expanduser('~/.local/share/fuwari/portal_restore_token')
+
+# What to tell someone whose system lacks GStreamer or its PipeWire plugin.
+INSTALL_HINT = (
+    "OCR on this desktop needs GStreamer and its PipeWire plugin. Install "
+    "them with your package manager: on Arch and CachyOS, gstreamer, "
+    "gst-plugins-base and gst-plugin-pipewire; on Debian and Ubuntu, "
+    "gstreamer1.0-tools, gstreamer1.0-plugins-base and gstreamer1.0-pipewire; "
+    "on Fedora, gstreamer1-plugins-base and pipewire-gstreamer."
+)
+
+# Environment variables the AppImage sets for its own bundled libraries. The
+# helper is the system's GStreamer and must load the system's libraries, so
+# these are removed for it: inheriting them would point it at the bundle's
+# older copies.
+_BUNDLE_ENV = ('LD_LIBRARY_PATH', 'LD_PRELOAD', 'PYTHONHOME', 'PYTHONPATH',
+               'GST_PLUGIN_PATH', 'GST_PLUGIN_PATH_1_0', 'GST_PLUGIN_SYSTEM_PATH',
+               'GST_PLUGIN_SYSTEM_PATH_1_0', 'GST_PLUGIN_SCANNER',
+               'GIO_MODULE_DIR', 'GI_TYPELIB_PATH')
+
+# The helper's -v output names the caps it settled on, which is how the frame
+# size is learned: raw pixels down a pipe carry no size of their own.
+_CAPS_RE = re.compile(r'fdsink.*caps = video/x-raw.*?width=\(int\)(\d+).*?height=\(int\)(\d+)')
 
 
 class PortalCancelled(Exception):
@@ -128,15 +162,58 @@ def _new_token() -> str:
     return 'fuwari_' + secrets.token_hex(8)
 
 
+def _helper_env():
+    env = dict(os.environ)
+    for name in _BUNDLE_ENV:
+        env.pop(name, None)
+    return env
+
+
+def _unwrap(value):
+    """jeepney hands variants back as (signature, value) pairs; drop the
+    signatures, all the way down, so results read like plain Python."""
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str) \
+            and value[0] and value[0][0] in 'abdghinoqstuvxy(':
+        return _unwrap(value[1])
+    if isinstance(value, dict):
+        return {k: _unwrap(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_unwrap(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_unwrap(v) for v in value)
+    return value
+
+
+def gstreamer_missing():
+    """What the helper needs from the system and does not have, or None."""
+    env = _helper_env()
+    if not shutil.which('gst-launch-1.0', path=env.get('PATH')) \
+            or not shutil.which('gst-inspect-1.0', path=env.get('PATH')):
+        return "gst-launch-1.0 / gst-inspect-1.0"
+    for element in REQUIRED_ELEMENTS:
+        try:
+            ok = subprocess.run(['gst-inspect-1.0', element], env=env,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                timeout=10).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            ok = False
+        if not ok:
+            return element
+    return None
+
+
 class PortalCapture:
     def __init__(self):
         self._conn = None
         self._session = None
-        self._pipeline = None
-        self._sink = None
+        self._proc = None
+        self._read_fd = None
         self._frame = None
+        self._size = None            # (w, h) the helper is sending
         self._stream_size = None
         self._lock = threading.Lock()
+        self._stderr_tail = []
         self._reported = False
 
     # --- setup ---------------------------------------------------------------
@@ -150,22 +227,16 @@ class PortalCapture:
         the screen Fuwari is on. The bad choice is forgotten before raising,
         so asking again shows the dialog rather than restoring it.
         """
-        if Gst is None:
-            raise PortalError(
-                f"screen capture needs PyGObject and GStreamer ({_GI_ERROR}); "
-                "install python-gobject, gstreamer, gst-plugins-base and "
-                "gst-plugin-pipewire")
-        Gst.init(None)
-        # The Response signals are delivered to the main context that was the
-        # thread's default when they were subscribed to, so this thread gets
-        # its own and pumps it while waiting.
-        ctx = GLib.MainContext.new()
-        ctx.push_thread_default()
-        try:
-            self._conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-            node, props = self._handshake(ctx)
-        finally:
-            ctx.pop_thread_default()
+        if _JEEPNEY_ERROR is not None:
+            raise PortalError(f"screen capture needs the jeepney package ({_JEEPNEY_ERROR})")
+        # Checked before the dialog, so nobody picks a screen only to be told
+        # afterwards that capture cannot work.
+        missing = gstreamer_missing()
+        if missing:
+            raise PortalError(f"{INSTALL_HINT} (missing: {missing})")
+
+        self._conn = open_dbus_connection(bus='SESSION', enable_fds=True)
+        node, props = self._handshake()
 
         size = props.get('size')
         if size and len(size) == 2 and size[0] > 0 and size[1] > 0:
@@ -180,90 +251,83 @@ class PortalCapture:
             raise PortalWrongSource(got, tuple(expected_size))
 
         fd = self._open_remote()
-        self._start_pipeline(fd, node)
+        self._start_helper(fd, node)
 
         deadline = time.monotonic() + FIRST_FRAME_TIMEOUT
         while self._frame is None and time.monotonic() < deadline:
-            self._pull_latest()
-            if self._frame is None:
-                time.sleep(0.02)
+            if self._proc.poll() is not None:
+                break
+            time.sleep(0.05)
         if self._frame is None:
-            raise PortalError("stream started but no frame arrived")
+            detail = ' '.join(self._stderr_tail[-3:]) or "no output"
+            raise PortalError(f"screen share started but no frame arrived ({detail})")
 
     def _sender(self) -> str:
-        return self._conn.get_unique_name()[1:].replace('.', '_')
+        return self._conn.unique_name[1:].replace('.', '_')
 
-    def _subscribe(self, path, result):
-        def on_response(_conn, _sender, _path, _iface, _signal, params):
-            code, results = params.unpack()
-            result['code'] = code
-            result['results'] = results
-        return self._conn.signal_subscribe(
-            BUS_NAME, REQUEST, 'Response', path, None,
-            Gio.DBusSignalFlags.NONE, on_response)
+    def _call(self, method, signature, args, timeout=QUICK_TIMEOUT):
+        msg = new_method_call(
+            DBusAddress(OBJECT_PATH, bus_name=BUS_NAME, interface=SCREENCAST),
+            method, signature, args)
+        reply = self._conn.send_and_get_reply(msg, timeout=timeout)
+        if reply.header.message_type == MessageType.error:
+            raise PortalError(f"{method} failed: {reply.body}")
+        return reply
 
-    def _request(self, ctx, method, arg_sig, args, options, timeout):
+    def _request(self, method, arg_sig, args, options, timeout):
         """One portal call and its answer.
 
         The answer comes later, as a Response signal on a request object, and
         the portal can send it before the call has even returned. So the path
-        is predicted from our own handle_token and subscribed to first.
+        is predicted from our own handle_token and listened on first.
         """
         token = _new_token()
         options = dict(options)
-        options['handle_token'] = GLib.Variant('s', token)
+        options['handle_token'] = ('s', token)
         expected = f'{OBJECT_PATH}/request/{self._sender()}/{token}'
 
-        result = {}
-        sub = self._subscribe(expected, result)
-        try:
-            reply = self._conn.call_sync(
-                BUS_NAME, OBJECT_PATH, SCREENCAST, method,
-                GLib.Variant(f'({arg_sig}a{{sv}})', (*args, options)),
-                GLib.VariantType('(o)'), Gio.DBusCallFlags.NONE, -1, None)
-            handle = reply.unpack()[0]
-            if handle != expected and 'code' not in result:
-                # Portals older than 0.9 ignore handle_token and pick their
-                # own path.
-                self._conn.signal_unsubscribe(sub)
-                sub = self._subscribe(handle, result)
+        rule = MatchRule(type='signal', interface=REQUEST, member='Response',
+                         path=expected)
+        Proxy(message_bus, self._conn).AddMatch(rule)
+        with self._conn.filter(rule) as queue:
+            reply = self._call(method, arg_sig + 'a{sv}', (*args, options))
+            handle = reply.body[0]
+            if handle != expected:
+                # Portals before 0.9 ignored handle_token. Long gone from any
+                # current desktop, so not worth a second code path.
+                raise PortalError("the screen-share portal is too old")
+            try:
+                response = self._conn.recv_until_filtered(queue, timeout=timeout)
+            except TimeoutError:
+                raise PortalError(f"{method}: no response from the portal")
 
-            deadline = time.monotonic() + timeout
-            while 'code' not in result:
-                if time.monotonic() > deadline:
-                    raise PortalError(f"{method}: no response from the portal")
-                if not ctx.iteration(False):
-                    time.sleep(0.01)
-        finally:
-            self._conn.signal_unsubscribe(sub)
-
-        code = result['code']
+        code, results = response.body
         if code == 1:
             raise PortalCancelled()
         if code != 0:
             raise PortalError(f"{method} failed (response {code})")
-        return result['results']
+        return _unwrap(results)
 
-    def _handshake(self, ctx):
+    def _handshake(self):
         res = self._request(
-            ctx, 'CreateSession', '', (),
-            {'session_handle_token': GLib.Variant('s', _new_token())},
+            'CreateSession', '', (),
+            {'session_handle_token': ('s', _new_token())},
             QUICK_TIMEOUT)
         self._session = res['session_handle']
 
         opts = {
-            'types': GLib.Variant('u', SOURCE_MONITOR),
-            'multiple': GLib.Variant('b', False),
-            'cursor_mode': GLib.Variant('u', CURSOR_HIDDEN),
-            'persist_mode': GLib.Variant('u', PERSIST_UNTIL_REVOKED),
+            'types': ('u', SOURCE_MONITOR),
+            'multiple': ('b', False),
+            'cursor_mode': ('u', CURSOR_HIDDEN),
+            'persist_mode': ('u', PERSIST_UNTIL_REVOKED),
         }
         token = _load_token()
         if token:
-            opts['restore_token'] = GLib.Variant('s', token)
-        self._request(ctx, 'SelectSources', 'o', (self._session,), opts,
+            opts['restore_token'] = ('s', token)
+        self._request('SelectSources', 'o', (self._session,), opts,
                       QUICK_TIMEOUT)
 
-        res = self._request(ctx, 'Start', 'os', (self._session, ''), {},
+        res = self._request('Start', 'os', (self._session, ''), {},
                             DIALOG_TIMEOUT)
         # Single use: every session hands back a fresh one, and only that one
         # will restore the next.
@@ -278,57 +342,81 @@ class PortalCapture:
         return int(node), dict(props)
 
     def _open_remote(self) -> int:
-        reply, fds = self._conn.call_with_unix_fd_list_sync(
-            BUS_NAME, OBJECT_PATH, SCREENCAST, 'OpenPipeWireRemote',
-            GLib.Variant('(oa{sv})', (self._session, {})),
-            GLib.VariantType('(h)'), Gio.DBusCallFlags.NONE, -1, None, None)
-        return fds.get(reply.unpack()[0])
+        reply = self._call('OpenPipeWireRemote', 'oa{sv}', (self._session, {}))
+        return reply.body[0].to_raw_fd()
 
-    def _start_pipeline(self, fd, node):
-        # The four packed formats are what compositors actually send, so
-        # videoconvert normally passes straight through. Channel order is
-        # fixed up in numpy, only for the frames that are used, rather than
-        # converting every frame the compositor sends.
-        desc = (
-            f'pipewiresrc fd={fd} path={node} always-copy=true ! '
-            'videoconvert ! '
-            'video/x-raw,format=(string){BGRx,BGRA,RGBx,RGBA} ! '
-            'appsink name=sink max-buffers=1 drop=true sync=false'
+    def _start_helper(self, fd, node):
+        read_fd, write_fd = os.pipe()
+        # RGBx rather than RGB: four bytes a pixel means rows are never padded,
+        # so a frame is exactly width * height * 4 bytes on the pipe.
+        pipeline = (
+            f'pipewiresrc fd={fd} path={node} always-copy=true do-timestamp=true ! '
+            f'videorate drop-only=true max-rate={HELPER_MAX_FPS} ! '
+            'videoconvert ! video/x-raw,format=RGBx ! '
+            f'fdsink fd={write_fd} sync=false'
         )
-        self._pipeline = Gst.parse_launch(desc)
-        self._sink = self._pipeline.get_by_name('sink')
-        if self._pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
-            raise PortalError("GStreamer pipeline would not start")
+        # -v prints the caps each element settles on to stdout, which is
+        # where the frame size comes from. The frames themselves go to the
+        # pipe, so the two never mix.
+        self._proc = subprocess.Popen(
+            ['gst-launch-1.0', '-v'] + pipeline.split(),
+            pass_fds=(fd, write_fd),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=_helper_env(), text=False)
+        # The helper has its own copies now. Ours would keep the pipe open
+        # after the helper exits, so a reader would never see it end.
+        os.close(write_fd)
+        os.close(fd)
+        self._read_fd = read_fd
 
-    # --- frames --------------------------------------------------------------
+        threading.Thread(target=self._read_caps, daemon=True).start()
+        threading.Thread(target=self._read_stderr, daemon=True).start()
+        threading.Thread(target=self._read_frames, daemon=True).start()
 
-    def _pull_latest(self) -> None:
-        """Replace the kept frame if a newer one has arrived. Never blocks."""
-        sink = self._sink
-        if sink is None:
-            return
-        sample = sink.emit('try-pull-sample', 0)
-        if sample is None:
-            return
-        s = sample.get_caps().get_structure(0)
-        w, h = s.get_value('width'), s.get_value('height')
-        fmt = s.get_value('format')
-        buf = sample.get_buffer()
-        ok, info = buf.map(Gst.MapFlags.READ)
-        if not ok:
-            return
-        try:
-            data = np.frombuffer(info.data, dtype=np.uint8)
-            # Rows can be padded, so the stride comes from the buffer rather
-            # than from the width.
-            stride = info.size // h
-            px = data[:stride * h].reshape(h, stride)[:, :w * 4].reshape(h, w, 4)
-            rgb = px[:, :, 2::-1] if fmt.startswith('BGR') else px[:, :, :3]
-            frame = np.ascontiguousarray(rgb)
-        finally:
-            buf.unmap(info)
-        with self._lock:
-            self._frame = frame
+    # --- helper output -------------------------------------------------------
+
+    def _read_caps(self):
+        for raw in self._proc.stdout:
+            line = raw.decode('utf-8', 'replace')
+            m = _CAPS_RE.search(line)
+            if m:
+                with self._lock:
+                    self._size = (int(m.group(1)), int(m.group(2)))
+
+    def _read_stderr(self):
+        for raw in self._proc.stderr:
+            line = raw.decode('utf-8', 'replace').strip()
+            if line:
+                self._stderr_tail = (self._stderr_tail + [line])[-10:]
+
+    def _read_exact(self, n):
+        buf = bytearray(n)
+        view = memoryview(buf)
+        got = 0
+        while got < n:
+            chunk = os.read(self._read_fd, n - got)
+            if not chunk:
+                return None              # helper exited
+            view[got:got + len(chunk)] = chunk
+            got += len(chunk)
+        return buf
+
+    def _read_frames(self):
+        # Nothing on the pipe makes sense until the frame size is known.
+        while self._size is None:
+            if self._proc is None or self._proc.poll() is not None:
+                return
+            time.sleep(0.02)
+        while True:
+            with self._lock:
+                w, h = self._size
+            data = self._read_exact(w * h * 4)
+            if data is None:
+                return
+            px = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 4)
+            frame = np.ascontiguousarray(px[:, :, :3])
+            with self._lock:
+                self._frame = frame
 
     def grab_region(self, x, y, w, h, logical_size=None):
         """The selected region out of the newest frame, as RGB.
@@ -337,7 +425,6 @@ class PortalCapture:
         was selected. The frame is in physical pixels, so the scale is
         measured from its width against the monitor's logical width.
         """
-        self._pull_latest()
         with self._lock:
             frame = self._frame
         if frame is None:
@@ -364,15 +451,30 @@ class PortalCapture:
     # --- teardown ------------------------------------------------------------
 
     def stop(self) -> None:
-        if self._pipeline is not None:
-            self._pipeline.set_state(Gst.State.NULL)
-            self._pipeline = None
-            self._sink = None
-        if self._conn is not None and self._session:
+        proc, self._proc = self._proc, None
+        if proc is not None:
+            proc.terminate()
             try:
-                self._conn.call_sync(
-                    BUS_NAME, self._session, SESSION, 'Close', None, None,
-                    Gio.DBusCallFlags.NONE, -1, None)
-            except GLib.Error as e:
-                print("portal session close failed:", e)
-            self._session = None
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        if self._read_fd is not None:
+            try:
+                os.close(self._read_fd)
+            except OSError:
+                pass
+            self._read_fd = None
+        if self._conn is not None:
+            if self._session:
+                try:
+                    self._conn.send(new_method_call(
+                        DBusAddress(self._session, bus_name=BUS_NAME,
+                                    interface=SESSION), 'Close'))
+                except Exception as e:
+                    print("portal session close failed:", e)
+                self._session = None
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None

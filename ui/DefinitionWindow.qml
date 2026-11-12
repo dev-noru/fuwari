@@ -29,6 +29,28 @@ Window {
     property int posX: 0
     property int posY: 0
 
+    // Fires once the popup has left the screen, for the card screenshot.
+    Timer {
+        id: screenshotTimer
+        interval: 150
+        onTriggered: {
+            var path = bridge.take_screenshot()
+            overlayHint.contentItem.opacity = 1
+            // A new array of new objects: handing back the same array leaves
+            // the card window's field rows showing their old values.
+            var updated = []
+            var old = cardPreviewWindow.fields
+            for (var i = 0; i < old.length; i++) {
+                var f = Object.assign({}, old[i])
+                if (f.type === "image")
+                    f.value = path
+                updated.push(f)
+            }
+            cardPreviewWindow.fields = updated
+            cardPreviewWindow.visible = true
+        }
+    }
+
     function _reportMask() {
         if (!bridge) return
         if (!visible) { bridge.set_popup_mask(0, 0, 0, 0); return }
@@ -130,6 +152,9 @@ Window {
                         onClicked: {
                             var s = JSON.parse(bridge.get_settings())
                             var fieldMap = s.field_map
+                            // Freeze the audio buffer now, at the moment of
+                            // clicking, before anything else takes time.
+                            var hasClip = bridge.snapshot_sentence_audio()
                             var audio = bridge.store_audio(wordText2.text, readingText.text)
                             var data = {
                                 "Word": wordText2.text,
@@ -138,7 +163,7 @@ Window {
                                 "Sentence": bridge.sentence,
                                 "Sentence Furigana": bridge.sentence,
                                 "Definitions": root.currentResults[0].Definitions.join("\n"),
-                                "Image": "",
+                                "Images": "",
                                 "Frequency": freqText.text,
                                 "Sentence Audio": "",
                                 "Audio": audio
@@ -151,12 +176,28 @@ Window {
                                     value: data[key] || ""
                                 })
                             }
+                            // Closed first so a card left open from before
+                            // reloads its waveform for this new clip.
+                            cardPreviewWindow.visible = false
                             cardPreviewWindow.deck = s.deck
                             cardPreviewWindow.noteType = s.note_type
                             cardPreviewWindow.word = wordText2.text
                             cardPreviewWindow.reading = readingText.text
+                            cardPreviewWindow.hasClip = hasClip
                             cardPreviewWindow.fields = typedFields
-                            cardPreviewWindow.visible = true
+
+                            if (fieldMap["Images"]) {
+                                // Take Fuwari off the screen first, or the
+                                // popup ends up in its own screenshot. The
+                                // timer gives the compositor a frame or two
+                                // to actually unmap it.
+                                root.visible = false
+                                bridge.prepare_screenshot()
+                                overlayHint.contentItem.opacity = 0
+                                screenshotTimer.start()
+                            } else {
+                                cardPreviewWindow.visible = true
+                            }
                         }
                     }
                 }

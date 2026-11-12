@@ -4,3 +4,4 @@ websockets
 Pillow
 numpy
 fugashi
+jeepney

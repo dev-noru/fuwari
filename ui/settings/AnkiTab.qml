@@ -21,6 +21,8 @@ Item {
         noteTypeCombo.currentIndex = noteTypes.indexOf(s.note_type)
         fields = JSON.parse(bridge.get_fields(s.note_type))
         ankiUrl = s.anki_url || "http://127.0.0.1:8765"
+        audioBufferCheck.checked = s.sentence_audio_buffer === true
+        audioSecondsSlider.value = s.sentence_audio_seconds || 20
         Qt.callLater(function() {
             for (var i = 0; i < fieldRepeater.count; i++) {
                 var row = fieldRepeater.itemAt(i)
@@ -147,6 +149,49 @@ Item {
                         }
                     }
                   }
+                  Text {
+                      text: "Sentence Audio"
+                      color: palette.windowText
+                      font.bold: true
+                      topPadding: 10
+                  }
+                  CheckBox {
+                      id: audioBufferCheck
+                      text: "Keep the last few seconds of desktop audio for cards"
+                      contentItem: Text {
+                          text: audioBufferCheck.text
+                          color: palette.windowText
+                          leftPadding: audioBufferCheck.indicator.width + 6
+                          verticalAlignment: Text.AlignVCenter
+                          wrapMode: Text.Wrap
+                      }
+                  }
+                  Text {
+                      text: "Buffer length: " + Math.round(audioSecondsSlider.value) + " seconds"
+                      color: palette.windowText
+                      opacity: audioBufferCheck.checked ? 1 : 0.5
+                  }
+                  Slider {
+                      id: audioSecondsSlider
+                      width: parent.width
+                      from: 5; to: 60
+                      stepSize: 1
+                      snapMode: Slider.SnapAlways
+                      value: 20
+                      enabled: audioBufferCheck.checked
+                  }
+                  Text {
+                      width: parent.width
+                      // 48 kHz mono 16-bit is 96 KB per second of buffer.
+                      text: "Uses about " + (Math.round(audioSecondsSlider.value) * 0.096).toFixed(1) +
+                            " MB of memory while on. Needs PipeWire; clips are saved as Opus " +
+                            "if ffmpeg is installed, otherwise WAV."
+                      color: palette.windowText
+                      opacity: 0.6
+                      font.pointSize: 8
+                      wrapMode: Text.Wrap
+                  }
+
                   Button {
                       text: "Save"
                       onClicked: {
@@ -164,6 +209,8 @@ Item {
                           s.deck = deckCombo.currentText
                           s.note_type = noteTypeCombo.currentText
                           s.field_map = fieldMap
+                          s.sentence_audio_buffer = audioBufferCheck.checked
+                          s.sentence_audio_seconds = Math.round(audioSecondsSlider.value)
                           bridge.save_settings_slot(JSON.stringify(s))
                           Window.window.visible = false
                       }

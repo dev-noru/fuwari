@@ -5,7 +5,8 @@ import QtQuick.Controls
 // Card Preview Window creation on adding cards.
 
 Window {
-  flags: Qt.Tool | Qt.WindowStaysOnTopHint 
+  flags: Qt.Tool | Qt.WindowStaysOnTopHint
+  transientParent: (bridge && bridge.legacyWindows) ? mainWindow : null
     SystemPalette { id: palette }
     id: root
     width: 400
@@ -26,6 +27,22 @@ Window {
     property string noteType: "Mining"
     property string word: ""
     property string reading: ""
+    // Sentence audio from the rolling buffer, frozen when the card opened.
+    // clipStart/clipEnd are the trim handles as fractions of the clip.
+    property bool hasClip: false
+    property var peaks: []
+    property real clipLength: 0
+    property real clipStart: 0
+    property real clipEnd: 1
+
+    onVisibleChanged: {
+        if (visible && hasClip) {
+            peaks = bridge.sentence_audio_peaks(160)
+            clipLength = bridge.sentence_audio_length()
+            clipStart = 0
+            clipEnd = 1
+        }
+    }
  
     Flickable {
             anchors.fill: parent
@@ -72,6 +89,7 @@ Window {
                         TextArea {
                             id: fieldInput
                             width: parent.width
+                            visible: !(modelData.type === "sentence_audio" && root.hasClip)
                             text: modelData.value
                             wrapMode: Text.Wrap
                             color: palette.windowText
@@ -91,6 +109,78 @@ Window {
                             fillMode: Image.PreserveAspectFit
                         }
 
+                        // Waveform of the buffered audio. Drag on it to move
+                        // whichever trim handle is closer to the pointer.
+                        Item {
+                            id: waveBox
+                            visible: modelData.type === "sentence_audio" && root.hasClip
+                            width: parent.width
+                            height: visible ? 60 : 0
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 3
+                                color: Qt.rgba(palette.windowText.r, palette.windowText.g, palette.windowText.b, 0.04)
+                            }
+
+                            Row {
+                                anchors.fill: parent
+                                Repeater {
+                                    model: root.peaks
+                                    Rectangle {
+                                        property real frac: (index + 0.5) / root.peaks.length
+                                        width: waveBox.width / root.peaks.length
+                                        height: Math.max(1, modelData * waveBox.height)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: frac >= root.clipStart && frac <= root.clipEnd
+                                               ? palette.highlight : palette.mid
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                x: root.clipStart * waveBox.width - width / 2
+                                width: 3; height: parent.height
+                                color: palette.highlight
+                            }
+                            Rectangle {
+                                x: root.clipEnd * waveBox.width - width / 2
+                                width: 3; height: parent.height
+                                color: palette.highlight
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.SizeHorCursor
+                                // Keep the Flickable from taking the drag.
+                                preventStealing: true
+                                property bool movingStart: true
+                                function moveTo(px) {
+                                    var f = Math.max(0, Math.min(1, px / width))
+                                    if (movingStart)
+                                        root.clipStart = Math.min(f, root.clipEnd - 0.01)
+                                    else
+                                        root.clipEnd = Math.max(f, root.clipStart + 0.01)
+                                }
+                                onPressed: (mouse) => {
+                                    var f = mouse.x / width
+                                    movingStart = Math.abs(f - root.clipStart) < Math.abs(f - root.clipEnd)
+                                    moveTo(mouse.x)
+                                }
+                                onPositionChanged: (mouse) => { if (pressed) moveTo(mouse.x) }
+                            }
+                        }
+
+                        Text {
+                            visible: waveBox.visible
+                            text: (root.clipStart * root.clipLength).toFixed(1) + "s – "
+                                  + (root.clipEnd * root.clipLength).toFixed(1) + "s  ("
+                                  + ((root.clipEnd - root.clipStart) * root.clipLength).toFixed(1) + "s)"
+                            color: palette.windowText
+                            opacity: 0.7
+                            font.pointSize: 8
+                        }
+
                         Text {
                             visible: modelData.type === "audio" || modelData.type === "sentence_audio"
                             text: "▶ Play"
@@ -100,7 +190,11 @@ Window {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
-                                    if (modelData.type === "sentence_audio") {
+                                    if (modelData.type === "sentence_audio" && root.hasClip) {
+                                        var clipPath = bridge.export_sentence_audio(root.clipStart, root.clipEnd)
+                                        if (clipPath !== "") bridge.play_audio("file://" + clipPath)
+                                    }
+                                    else if (modelData.type === "sentence_audio") {
                                         bridge.play_audio("file://" + root.fields[index].value)
                                     } 
                                     else {
@@ -124,10 +218,13 @@ Window {
                       if (f.type === "audio") {
                           flatFields[f.name] = f.value
                       } else if (f.type === "sentence_audio") {
-                          var fname = bridge.store_media_file(f.value)
+                          var audioPath = root.hasClip
+                              ? bridge.export_sentence_audio(root.clipStart, root.clipEnd)
+                              : f.value
+                          var fname = audioPath ? bridge.store_media_file(audioPath) : ""
                           flatFields[f.name] = fname ? "[sound:" + fname + "]" : ""
                       } else if (f.type === "image") {
-                          var fname = bridge.store_media_file(f.value)
+                          var fname = f.value ? bridge.store_media_file(f.value) : ""
                           flatFields[f.name] = fname ? "<img src='" + fname + "'>" : ""
                       } else {
                           flatFields[f.name] = f.value
