@@ -44,6 +44,15 @@ MIN_CHAR_SIDE = 4
 # stricter value drops real characters and glues their neighbours together.
 MIN_CHAR_CONF = 0.25
 
+# Stability filter. An animated background makes the detector find "text" in
+# moving shapes, and those boxes appear, vanish and jump around from scan to
+# scan. Real text stays put. A box is kept only if a box in the same place
+# (overlap of at least STABLE_IOU) was found in STABLE_HITS of the last
+# STABLE_WINDOW recognitions. Only recognitions count, not gated scans.
+STABLE_HITS = 2
+STABLE_WINDOW = 3
+STABLE_IOU = 0.5
+
 
 @dataclass
 class CharBox:
@@ -59,6 +68,95 @@ class TextRegion:
     vertical: bool
     confidence: float                   # block-level, mean of char confidences
     chars: list[CharBox] | None = None  # per-char detail when the engine has it
+
+
+class RegionTracker:
+    """Drops text regions that do not hold still across recognitions.
+
+    Each track remembers, for the last STABLE_WINDOW recognitions, whether a
+    region in its place was found. Regions are matched to tracks by IoU on
+    their boxes alone, never by their pixels or text, so a moving background
+    behind real text does not make that text look unstable.
+    """
+
+    def __init__(self, hits=STABLE_HITS, window=STABLE_WINDOW, iou=STABLE_IOU):
+        self._hits = hits
+        self._window = window
+        self._iou = iou
+        self._tracks = []   # each: [box, deque of bools]
+
+    def reset(self):
+        self._tracks = []
+
+    @staticmethod
+    def _overlap(a, b):
+        ax, ay, aw, ah = a
+        bx, by, bw, bh = b
+        iw = min(ax + aw, bx + bw) - max(ax, bx)
+        ih = min(ay + ah, by + bh) - max(ay, by)
+        if iw <= 0 or ih <= 0:
+            return 0.0
+        inter = iw * ih
+        union = aw * ah + bw * bh - inter
+        return inter / union if union > 0 else 0.0
+
+    def update(self, regions):
+        """Record one recognition's regions; return the ones that are stable."""
+        from collections import deque
+
+        # Best overlaps first, so each region claims the track it fits best
+        # and two regions can't share one track.
+        pairs = []
+        for ri, region in enumerate(regions):
+            for ti, (box, _) in enumerate(self._tracks):
+                score = self._overlap(region.box, box)
+                if score >= self._iou:
+                    pairs.append((score, ri, ti))
+        pairs.sort(reverse=True)
+
+        region_track = {}
+        used_tracks = set()
+        for _, ri, ti in pairs:
+            if ri in region_track or ti in used_tracks:
+                continue
+            region_track[ri] = ti
+            used_tracks.add(ti)
+
+        # Matched tracks follow their region, so text that grows in place
+        # (typewriter effect) keeps the same track.
+        for ri, ti in region_track.items():
+            self._tracks[ti][0] = regions[ri].box
+            self._tracks[ti][1].append(True)
+        for ti, track in enumerate(self._tracks):
+            if ti not in used_tracks:
+                track[1].append(False)
+
+        # Unmatched regions start new tracks.
+        for ri, region in enumerate(regions):
+            if ri not in region_track:
+                history = deque([True], maxlen=self._window)
+                region_track[ri] = len(self._tracks)
+                self._tracks.append([region.box, history])
+
+        kept = [region for ri, region in enumerate(regions)
+                if sum(self._tracks[region_track[ri]][1]) >= self._hits]
+
+        # A track with no hits left in its window is gone from the screen.
+        # Dropping it keeps the list bounded however long the app runs.
+        self._tracks = [t for t in self._tracks if any(t[1])]
+        return kept
+
+    def known(self, regions):
+        """The regions that sit on a track that is currently stable.
+
+        Read-only: for checking a frame against what is already on screen
+        without counting it as a recognition.
+        """
+        stable = [box for box, history in self._tracks
+                  if sum(history) >= self._hits]
+        return [r for r in regions
+                if any(self._overlap(r.box, box) >= self._iou
+                       for box in stable)]
 
 
 class OCRPipeline(ABC):
@@ -226,6 +324,13 @@ class OCRThread:
         self._last_sig = None
         self._scans = 0
         self._recognitions = 0
+        self._tracker = RegionTracker()
+        # The last recognition's regions before filtering, and whether the
+        # filter held any back. A gated scan (identical pixels) re-detects
+        # exactly these, so it can give them their second sighting without
+        # running OCR again.
+        self._last_raw = []
+        self._held_back = False
 
     def start(self):
         self._pipeline = _get_pipeline()
@@ -250,6 +355,7 @@ class OCRThread:
     def stop(self):
         self._running = False
         self._region = None
+        self._tracker.reset()
         portal, self._portal = self._portal, None
         if portal is not None:
             portal.stop()
@@ -266,6 +372,9 @@ class OCRThread:
         self._highlighting = bool(on)
 
     def set_region(self, region_str):
+        # Boxes from the old capture area mean nothing in the new one.
+        if region_str != self._region:
+            self._tracker.reset()
         self._region = region_str
 
     def set_mask(self, rect):
@@ -315,6 +424,37 @@ class OCRThread:
             ty1 = min(diff.shape[0], y1 // step + 1 + pad)
             diff[ty0:ty1, tx0:tx1] = 0
         return diff.mean() >= self._stale_epsilon
+
+    def _text_moved_on(self, img):
+        """Whether the text changed under a highlight, not just the pixels.
+
+        Called only when _screen_moved_on already says the frame differs.
+        On an animated background that is true every scan while the text
+        sits still, so the frame is read to be sure. The highlighted word is
+        blanked first, since its tint would be read as different text, which
+        means the read is the old text minus that word. So it counts as the
+        same screen if nearly all of what was read is in what was last sent.
+
+        Only regions on a stable track are compared: the background's
+        flickering false text would otherwise make every frame look new.
+        A new line in the same place still lands on its old track, and reads
+        differently.
+        """
+        last = self._last_fired
+        if not last:
+            return True
+        if self._highlight_rect is not None:
+            x, y, w, h = self._highlight_rect
+            pad = 4
+            img[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad] = 0
+        regions = self._tracker.known(
+            self._pipeline.process(img, self._min_char_conf))
+        text = self._to_sentence(regions)
+        if not text:
+            return True
+        matcher = difflib.SequenceMatcher(None, text, last, autojunk=False)
+        found = sum(b.size for b in matcher.get_matching_blocks())
+        return found / len(text) < SIMILARITY_THRESHOLD
 
     def _capture(self):
         if not self._region:
@@ -520,7 +660,7 @@ class OCRThread:
                 # rests on a word), and pausing outright left the overlay
                 # stuck on the old screen's words until the pointer left them.
                 if self._highlighting:
-                    if self._screen_moved_on(img):
+                    if self._screen_moved_on(img) and self._text_moved_on(img):
                         self._stale_hits += 1
                     else:
                         self._stale_hits = 0
@@ -546,6 +686,23 @@ class OCRThread:
                     # is a stronger guarantee than re-running OCR and
                     # comparing the strings, and it counts toward stability
                     # without paying for the recognition.
+                    if self._held_back:
+                        # Same pixels, so detection would find the same
+                        # boxes: count that as their second sighting. Anything
+                        # that passes now held still across two frames, which
+                        # is what stable_count >= 2 stands for, so it can be
+                        # sent on this scan rather than waiting another.
+                        kept = self._tracker.update(self._last_raw)
+                        self._held_back = len(kept) < len(self._last_raw)
+                        ordered = self._order_regions(kept)
+                        grouped = (self._group_lines(ordered)
+                                   if self._join_lines else ordered)
+                        self._last_regions = ordered
+                        self._last_blocks = self._blocks(grouped)
+                        text = self._joined(self._last_blocks)
+                        if text:
+                            last_text = text
+                            stable_count = 1
                     if last_text:
                         stable_count += 1
                         if stable_count >= 2 and last_text != self._last_fired:
@@ -567,6 +724,12 @@ class OCRThread:
                       f"({(time.perf_counter() - t0) * 1000:.0f}ms) "
                       f"| scans: {self._scans} "
                       f"| mask: {'on' if self._mask else 'off'}")
+                detected = len(regions)
+                self._last_raw = regions
+                regions = self._tracker.update(regions)
+                self._held_back = len(regions) < detected
+                if detected != len(regions):
+                    print(f"  stability filter kept {len(regions)}/{detected} regions")
                 ordered = self._order_regions(regions)
                 grouped = self._group_lines(ordered) if self._join_lines else ordered
                 blocks = self._blocks(grouped)
