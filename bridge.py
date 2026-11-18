@@ -1453,6 +1453,9 @@ class Bridge(QObject):
             word = word.split('-')[0]
             hiragana = katakana_to_hiragana(word)
             results = []
+            # Entries from lookup_token arrive already ordered by the token's
+            # reading; a plain lookup only has the database's order.
+            plain_lookup = entries is None
             if entries is None:
                 entries = dictionary(word) or dictionary(hiragana)
             if entries:
@@ -1470,7 +1473,7 @@ class Bridge(QObject):
                     rows = groups[key]
                     title, kanji, reading = key
                     first = rows[0]
-                    freq_rank = frequency(kanji) or frequency(reading) or None
+                    freq_rank = frequency(kanji, reading) or frequency(reading) or None
                     pos = [POS_LABELS.get(p, p) for p in first['def_tags'].split() if not p.isdigit()]
 
                     # flatten every sense from every row in this group, numbered continuously
@@ -1498,6 +1501,13 @@ class Bridge(QObject):
                         # flat form kept for Anki mining
                         'Definitions': [f"{s['num']}.) {s['glosses']}" for s in senses],
                     })
+
+            # Without a token reading to go on, put the readings people actually
+            # use first: 脳 read のう (rank 2248) before the archaic なずき, which
+            # no frequency list ranks at all. Stable, so dictionary priority
+            # still decides among entries with the same reading.
+            if plain_lookup:
+                results.sort(key=lambda r: (r['Frequency'] is None, r['Frequency'] or 0))
 
             # JMdict gives a spelling variant no definition of its own, just a
             # pointer at the spelling that has one. Showing an arrow and a word

@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from fugashi import GenericTagger, create_feature_wrapper
 import sqlite3
 import threading
@@ -117,22 +118,49 @@ def lookup_best(candidates, reading='', pos=''):
     return best[1] if best else []
 
 
+def _freq_number(value):
+    """A frequency as a number, from either plain shape Yomitan allows.
+
+    Dictionaries store it as a bare number, a string such as "1234" or
+    "1234㋕", or {"value": 1234, "displayValue": "..."}. None if there is
+    no number to be had.
+    """
+    if isinstance(value, dict):
+        value = value.get('value')
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        match = re.match(r'\s*(\d+)', value)
+        return int(match.group(1)) if match else None
+    return None
+
 # Looks up frequency of entries from the database
-def lookup_frequency(text):
+def lookup_frequency(text, reading=None):
+    """Frequency rank of a term, from the highest-priority dictionary that has one.
+
+    Entries can also be tied to one reading: {"reading": ..., "frequency": ...}.
+    Those only count when they match the reading given, the way Yomitan
+    filters them, so 打 read だ never gets the rank of 打 read ダース. With no
+    reading given, any entry counts.
+    """
     cursor.execute('''
         SELECT tm.data FROM term_meta tm
         JOIN dictionaries d ON tm.dictionary_id = d.id
         WHERE tm.term = ? AND tm.type = 'freq' AND d.enabled = 1
         ORDER BY d.priority ASC
-        LIMIT 1
     ''', (text,))
-    row = cursor.fetchone()
-    if not row:
-        return None
-    data = json.loads(row[0])
-    if isinstance(data, dict):
-        return data.get('value')
-    return data
+    for (raw,) in cursor.fetchall():
+        data = json.loads(raw)
+        if isinstance(data, dict) and 'reading' in data:
+            if reading is not None and data['reading'] != reading:
+                continue
+            data = data.get('frequency')
+        number = _freq_number(data)
+        if number is not None:
+            return number
+    return None
 
 # Looks up kanji from the database
 def lookup_kanji(character):

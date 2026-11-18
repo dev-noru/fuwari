@@ -35,7 +35,17 @@ Window {
     property real clipStart: 0
     property real clipEnd: 1
 
+    // Whether the clip and the screenshot go on the card. Turning one off
+    // keeps it around, so it can be turned back on before adding.
+    property bool useClip: true
+    property bool useImage: true
+
     onVisibleChanged: {
+        if (visible) {
+            // Fresh for every card, or "off" would carry over to the next one.
+            useClip = true
+            useImage = true
+        }
         if (visible && hasClip) {
             peaks = bridge.sentence_audio_peaks(160)
             clipLength = bridge.sentence_audio_length()
@@ -107,6 +117,7 @@ Window {
                             width: parent.width
                             height: 120
                             fillMode: Image.PreserveAspectFit
+                            opacity: root.useImage ? 1 : 0.3
                         }
 
                         // Waveform of the buffered audio. Drag on it to move
@@ -116,6 +127,7 @@ Window {
                             visible: modelData.type === "sentence_audio" && root.hasClip
                             width: parent.width
                             height: visible ? 60 : 0
+                            opacity: root.useClip ? 1 : 0.3
 
                             Rectangle {
                                 anchors.fill: parent
@@ -152,6 +164,7 @@ Window {
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.SizeHorCursor
+                                enabled: root.useClip
                                 // Keep the Flickable from taking the drag.
                                 preventStealing: true
                                 property bool movingStart: true
@@ -185,12 +198,14 @@ Window {
                             visible: modelData.type === "audio" || modelData.type === "sentence_audio"
                             text: "▶ Play"
                             color: palette.highlight
+                            opacity: (modelData.type === "sentence_audio" && root.hasClip && !root.useClip) ? 0.4 : 1
                             font.pointSize: 9
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     if (modelData.type === "sentence_audio" && root.hasClip) {
+                                        if (!root.useClip) return
                                         var clipPath = bridge.export_sentence_audio(root.clipStart, root.clipEnd)
                                         if (clipPath !== "") bridge.play_audio("file://" + clipPath)
                                     }
@@ -203,10 +218,29 @@ Window {
                                     }
                                 }
                             }
+                          }
+                        // Leave the recording or screenshot off this card.
+                        Text {
+                            property bool isClip: modelData.type === "sentence_audio" && root.hasClip
+                            property bool isImage: modelData.type === "image" && fieldInput.text !== ""
+                            property bool used: isClip ? root.useClip : root.useImage
+                            visible: isClip || isImage
+                            text: used ? "✕ Don't use" : "↺ Use again"
+                            color: palette.highlight
+                            font.pointSize: 9
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (parent.isClip) root.useClip = !root.useClip
+                                    else root.useImage = !root.useImage
+                                }
+                            }
                         }
                     }
                 }   
               }
+
           Row {
             spacing: 8
             Button {
@@ -219,12 +253,12 @@ Window {
                           flatFields[f.name] = f.value
                       } else if (f.type === "sentence_audio") {
                           var audioPath = root.hasClip
-                              ? bridge.export_sentence_audio(root.clipStart, root.clipEnd)
+                              ? (root.useClip ? bridge.export_sentence_audio(root.clipStart, root.clipEnd) : "")
                               : f.value
                           var fname = audioPath ? bridge.store_media_file(audioPath) : ""
                           flatFields[f.name] = fname ? "[sound:" + fname + "]" : ""
                       } else if (f.type === "image") {
-                          var fname = f.value ? bridge.store_media_file(f.value) : ""
+                          var fname = (f.value && root.useImage) ? bridge.store_media_file(f.value) : ""
                           flatFields[f.name] = fname ? "<img src='" + fname + "'>" : ""
                       } else {
                           flatFields[f.name] = f.value
