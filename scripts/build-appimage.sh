@@ -4,7 +4,7 @@ set -euo pipefail
 # ── config ──────────────────────────────────────────────────────────
 APPDIR=Fuwari.AppDir
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYVER=3.11
+PYVER=3.14
 BUNDLE_LAYERSHELL=true  # set false once you confirm QML doesn't use LayerShell
 
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt  # manylinux py needs this for TLS
@@ -20,7 +20,7 @@ command -v cargo >/dev/null || { echo "ERROR: cargo missing (rustup or pacman: r
 if ! ls python${PYVER}*-manylinux2014_x86_64.AppImage >/dev/null 2>&1; then
   echo "Fetching Python base..."
   URL=$(curl -s "https://api.github.com/repos/niess/python-appimage/releases/tags/python${PYVER}" \
-        | grep browser_download_url | grep manylinux2014_x86_64 | grep -v aarch64 \
+        | grep browser_download_url | grep manylinux2014_x86_64 | grep -v aarch64 | grep -v 'cp3[0-9]*t-' \
         | cut -d '"' -f4 | head -1)
   [ -n "$URL" ] || { echo "ERROR: couldn't find base; grab it from the python-appimage releases page"; exit 1; }
   curl -L -o "$(basename "$URL")" "$URL"
