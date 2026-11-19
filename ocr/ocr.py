@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 import difflib
@@ -52,6 +53,18 @@ MIN_CHAR_CONF = 0.25
 STABLE_HITS = 2
 STABLE_WINDOW = 3
 STABLE_IOU = 0.5
+
+# Threads ONNX Runtime may use for one inference. Its default is every
+# physical core, which on a long piece of text (60-odd lines, seconds per pass)
+# leaves nothing for the UI thread and Fuwari freezes until the pass is done.
+# One core short of all of them keeps the window responsive; os.cpu_count()
+# counts SMT threads, so half of it stands in for the physical cores.
+ONNX_THREADS = max(1, (os.cpu_count() or 2) // 2 - 1)
+# The least time between two malloc_trim calls. Each one locks glibc's
+# allocator pools one by one while it walks them, and any thread that needs
+# memory from a locked pool waits, the UI thread included. Every pass was too
+# often on a long text; this still returns the memory, in bigger steps.
+TRIM_INTERVAL = 15.0
 
 
 @dataclass
@@ -159,6 +172,46 @@ class RegionTracker:
                        for box in stable)]
 
 
+def _load_malloc_trim():
+    """glibc's malloc_trim, or None where there is none (musl, macOS)."""
+    import ctypes
+    import ctypes.util
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library('c') or 'libc.so.6')
+        trim = libc.malloc_trim
+    except (OSError, AttributeError):
+        return None
+    trim.argtypes = [ctypes.c_size_t]
+    trim.restype = ctypes.c_int
+    return trim
+
+
+_malloc_trim = _load_malloc_trim()
+_last_trim = 0.0
+
+
+def _trim_heap():
+    """Hand memory freed by the last recognition back to the OS.
+
+    ONNX Runtime allocates its working tensors through glibc, from several
+    threads, in sizes that change with the number of lines on screen. glibc
+    keeps what is freed in per-thread pools instead of returning it, and
+    those pools fragment, so resident memory climbs pass after pass even
+    though nothing is still in use: Python's own memory stays flat while the
+    process grows. malloc_trim walks every pool and releases the free pages.
+    Runs at most once every TRIM_INTERVAL, and only after a recognition, so
+    a still screen that the gate skips costs nothing.
+    """
+    global _last_trim
+    if _malloc_trim is None:
+        return
+    now = time.monotonic()
+    if now - _last_trim < TRIM_INTERVAL:
+        return
+    _last_trim = now
+    _malloc_trim(0)
+
+
 class OCRPipeline(ABC):
     @abstractmethod
     def process(self, image, min_conf=MIN_CHAR_CONF) -> list[TextRegion]:
@@ -215,7 +268,8 @@ _pipeline_lock = threading.Lock()
 
 
 def _disable_onnx_arena() -> None:
-    """Stop ONNX Runtime's CPU memory arena growing without bound.
+    """Stop ONNX Runtime's CPU memory arena growing without bound, and keep
+    its threads from taking every core.
 
     The arena is on by default and never returns memory to the OS, so a scan
     every SCAN_INTERVAL grows resident memory for as long as the app runs --
@@ -224,7 +278,8 @@ def _disable_onnx_arena() -> None:
     constructor rather than by patching the engine.
 
     Costs a little latency per inference, since allocation is no longer served
-    from a pre-grown pool.
+    from a pre-grown pool, and long passes run a little slower on one fewer
+    core with threads that sleep between pieces of work. See ONNX_THREADS.
     """
     try:
         import onnxruntime
@@ -244,6 +299,13 @@ def _disable_onnx_arena() -> None:
             kwargs['sess_options'] = opts
         opts.enable_cpu_mem_arena = False
         opts.enable_mem_pattern = False
+        # Idle worker threads otherwise spin on a core waiting for the next
+        # piece of work instead of sleeping, so a pass keeps every core busy
+        # even while it is waiting on itself.
+        opts.add_session_config_entry('session.intra_op.allow_spinning', '0')
+        opts.add_session_config_entry('session.inter_op.allow_spinning', '0')
+        if opts.intra_op_num_threads == 0:
+            opts.intra_op_num_threads = ONNX_THREADS
         return original(self, *args, **kwargs)
 
     onnxruntime.InferenceSession.__init__ = patched
@@ -449,6 +511,7 @@ class OCRThread:
             img[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad] = 0
         regions = self._tracker.known(
             self._pipeline.process(img, self._min_char_conf))
+        _trim_heap()
         text = self._to_sentence(regions)
         if not text:
             return True
@@ -720,6 +783,7 @@ class OCRThread:
                 self._recognitions += 1
                 t0 = time.perf_counter()
                 regions = self._pipeline.process(img, self._min_char_conf)
+                _trim_heap()
                 print(f"OCR pass #{self._recognitions} "
                       f"({(time.perf_counter() - t0) * 1000:.0f}ms) "
                       f"| scans: {self._scans} "

@@ -8,7 +8,7 @@ import tracemalloc
 # memory and how that has changed since the previous report. Off by default:
 # tracing every allocation slows the interpreter noticeably.
 if os.getenv('FUWARI_MEMTRACE') == '1':
-    tracemalloc.start(12)
+    tracemalloc.start(1)
 
 DB_PATH = os.path.expanduser('~/.local/share/fuwari/fuwari.db')
 
@@ -93,8 +93,13 @@ if os.getenv('FUWARI_MEMTRACE') == '1':
         ))
         cur, peak = tracemalloc.get_traced_memory()
         _mem_state['n'] += 1
+        rss_anon = 0
+        with open('/proc/self/status') as _f:
+            for _line in _f:
+                if _line.startswith('RssAnon:'):
+                    rss_anon = int(_line.split()[1]) // 1024
         print(f"\n--- memtrace #{_mem_state['n']}  traced={cur/1e6:.0f}MB "
-              f"peak={peak/1e6:.0f}MB ---")
+              f"peak={peak/1e6:.0f}MB  RssAnon={rss_anon}MB ---")
         if _mem_state['prev'] is not None:
             print("  biggest growth since last report:")
             for st in snap.compare_to(_mem_state['prev'], 'lineno')[:6]:
@@ -107,7 +112,7 @@ if os.getenv('FUWARI_MEMTRACE') == '1':
         _mem_state['prev'] = snap
 
     _mem_timer = _QTimer()
-    _mem_timer.setInterval(15000)
+    _mem_timer.setInterval(60000)
     _mem_timer.timeout.connect(_report_memory)
     _mem_timer.start()
 

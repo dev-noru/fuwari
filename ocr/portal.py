@@ -210,6 +210,11 @@ class PortalCapture:
         self._proc = None
         self._read_fd = None
         self._frame = None
+        # The bytearray self._frame looks into, and a second one of the same
+        # size that the next frame is read into. The two are swapped each
+        # frame, so reading allocates nothing once they exist.
+        self._front_buf = None
+        self._back_buf = None
         self._size = None            # (w, h) the helper is sending
         self._stream_size = None
         self._lock = threading.Lock()
@@ -389,17 +394,23 @@ class PortalCapture:
             if line:
                 self._stderr_tail = (self._stderr_tail + [line])[-10:]
 
-    def _read_exact(self, n):
-        buf = bytearray(n)
+    def _read_into(self, buf):
+        """Fill buf from the pipe. False if the helper exited first.
+
+        os.readv writes straight into buf. os.read would hand back a new bytes
+        object for every chunk the pipe gives (64 KB or so), hundreds per
+        frame, each copied in and thrown away. At several frames a second that
+        churn fragments the allocator until memory climbs and never comes back.
+        """
         view = memoryview(buf)
+        n = len(buf)
         got = 0
         while got < n:
-            chunk = os.read(self._read_fd, n - got)
-            if not chunk:
-                return None              # helper exited
-            view[got:got + len(chunk)] = chunk
-            got += len(chunk)
-        return buf
+            count = os.readv(self._read_fd, [view[got:]])
+            if not count:
+                return False             # helper exited
+            got += count
+        return True
 
     def _read_frames(self):
         # Nothing on the pipe makes sense until the frame size is known.
@@ -410,13 +421,23 @@ class PortalCapture:
         while True:
             with self._lock:
                 w, h = self._size
-            data = self._read_exact(w * h * 4)
-            if data is None:
+            n = w * h * 4
+            back = self._back_buf
+            if back is None or len(back) != n:
+                # First frame, or the size changed: the only allocation.
+                back = bytearray(n)
+            if not self._read_into(back):
                 return
-            px = np.frombuffer(data, dtype=np.uint8).reshape(h, w, 4)
-            frame = np.ascontiguousarray(px[:, :, :3])
+            # RGBx as it came. grab_region drops the 4th byte while copying
+            # out the region, so there is no full-frame RGB copy per frame.
+            frame = np.frombuffer(back, dtype=np.uint8).reshape(h, w, 4)
             with self._lock:
+                old = self._front_buf
                 self._frame = frame
+                self._front_buf = back
+            # The old front buffer becomes the next back buffer. grab_region
+            # copies under the lock, so nothing is still reading it.
+            self._back_buf = old if old is not None and len(old) == n else None
 
     def grab_region(self, x, y, w, h, logical_size=None):
         """The selected region out of the newest frame, as RGB.
@@ -425,10 +446,16 @@ class PortalCapture:
         was selected. The frame is in physical pixels, so the scale is
         measured from its width against the monitor's logical width.
         """
+        # The whole copy happens under the lock: the reader swaps buffers
+        # under it and then writes into the one that was the front, so a copy
+        # made after letting go could be torn by the next frame.
         with self._lock:
             frame = self._frame
-        if frame is None:
-            return None
+            if frame is None:
+                return None
+            return self._copy_region(frame, x, y, w, h, logical_size)
+
+    def _copy_region(self, frame, x, y, w, h, logical_size):
         fh, fw = frame.shape[0], frame.shape[1]
         lw, lh = logical_size or self._stream_size or (fw, fh)
         if lw <= 0 or lh <= 0:
@@ -445,8 +472,9 @@ class PortalCapture:
         if x1 <= x0 or y1 <= y0:
             return None
         # A copy: the OCR loop blanks the popup mask into what it is given,
-        # and the same frame may be handed out again next scan.
-        return frame[y0:y1, x0:x1].copy()
+        # and the buffer behind the frame is reused for a later one. Taking
+        # only the first three channels makes it contiguous RGB.
+        return frame[y0:y1, x0:x1, :3].copy()
 
     # --- teardown ------------------------------------------------------------
 
