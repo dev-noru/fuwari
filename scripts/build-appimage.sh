@@ -8,6 +8,10 @@ PYVER=3.14
 BUNDLE_LAYERSHELL=true  # set false once you confirm QML doesn't use LayerShell
 
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt  # manylinux py needs this for TLS
+# The bundled Python must not see ~/.local/lib/pythonX.Y: with the same
+# version as the host, pip would count packages there as already installed
+# and leave them out of the bundle.
+export PYTHONNOUSERSITE=1
 
 # ── 0. prerequisites: fail early, not after a 1GB download ───────────
 command -v appimagetool >/dev/null || { echo "ERROR: appimagetool missing (AUR: appimagetool-bin)"; exit 1; }
@@ -113,6 +117,9 @@ cat > "$APPDIR/AppRun" <<'EOF'
 HERE="$(dirname "$(readlink -f "$0")")"
 PYBIN="$(ls -d "$HERE"/opt/python*/bin/python3.* 2>/dev/null | grep -E 'python3\.[0-9]+$' | head -1)"
 [ -n "$PYBIN" ] || { echo "ERROR: bundled Python not found"; exit 1; }
+# Same at runtime: never load packages from the user's ~/.local, which may be
+# different versions built for a different setup.
+export PYTHONNOUSERSITE=1
 QTLIB="$("$PYBIN" -c 'import PySide6,os;print(os.path.join(os.path.dirname(PySide6.__file__),"Qt","lib"))')"
 export LD_LIBRARY_PATH="$HERE/usr/lib:$QTLIB:${LD_LIBRARY_PATH:-}"
 export PATH="$HERE/usr/bin:$PATH"
